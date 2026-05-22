@@ -2,7 +2,12 @@ const { poolPromise, sql } = require('../config/db');
 
 // POST /api/products
 exports.createProduct = async (req, res) => {
-  const { supplierUserId, sku, productName, basePrice, supplierNotes } = req.body;
+  const { 
+    supplierUserId, sku, productName, basePrice, supplierNotes,
+    barcode, brand, category, rpuMrp, suggestedRetailPrice, costNote,
+    variantsJson, supplierLocation, deliveryCoverageJson, onlineSellingRequested,
+    productReadinessStatus, imageUrl
+  } = req.body;
 
   if (!supplierUserId || !sku || !productName) {
     return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'supplierUserId, sku, and productName are required' });
@@ -21,13 +26,49 @@ exports.createProduct = async (req, res) => {
         .input('productName', sql.NVarChar(255), productName)
         .input('basePrice', sql.Decimal(18, 2), basePrice ? parseFloat(basePrice) : null)
         .input('supplierNotes', sql.NVarChar(1000), supplierNotes || null)
+        .input('barcode', sql.NVarChar(100), barcode || null)
+        .input('brand', sql.NVarChar(150), brand || null)
+        .input('category', sql.NVarChar(150), category || null)
+        .input('rpuMrp', sql.Decimal(18, 2), rpuMrp ? parseFloat(rpuMrp) : null)
+        .input('suggestedRetailPrice', sql.Decimal(18, 2), suggestedRetailPrice ? parseFloat(suggestedRetailPrice) : null)
+        .input('costNote', sql.NVarChar(500), costNote || null)
+        .input('variantsJson', sql.NVarChar(sql.MAX), variantsJson || null)
+        .input('supplierLocation', sql.NVarChar(255), supplierLocation || null)
+        .input('deliveryCoverageJson', sql.NVarChar(sql.MAX), deliveryCoverageJson || null)
+        .input('onlineSellingRequested', sql.Bit, onlineSellingRequested !== undefined ? (onlineSellingRequested ? 1 : 0) : 1)
+        .input('productReadinessStatus', sql.NVarChar(50), productReadinessStatus || 'NEEDS_REVIEW')
         .query(`
-          INSERT INTO dbo.Products (SupplierUserId, SKU, ProductName, BasePrice, SupplierNotes)
-          OUTPUT inserted.ProductId, inserted.SKU, inserted.ProductName, inserted.BasePrice, inserted.SupplierNotes
-          VALUES (@supplierUserId, @sku, @productName, @basePrice, @supplierNotes)
+          INSERT INTO dbo.Products (
+            SupplierUserId, SKU, ProductName, BasePrice, SupplierNotes,
+            Barcode, Brand, Category, RPU_MRP, SuggestedRetailPrice, CostNote,
+            VariantsJson, SupplierLocation, DeliveryCoverageJson, OnlineSellingRequested,
+            ProductReadinessStatus
+          )
+          OUTPUT 
+            inserted.ProductId, inserted.SKU, inserted.ProductName, inserted.BasePrice, inserted.SupplierNotes,
+            inserted.Barcode, inserted.Brand, inserted.Category, inserted.RPU_MRP, inserted.SuggestedRetailPrice,
+            inserted.CostNote, inserted.VariantsJson, inserted.SupplierLocation, inserted.DeliveryCoverageJson,
+            inserted.OnlineSellingRequested, inserted.ProductReadinessStatus
+          VALUES (
+            @supplierUserId, @sku, @productName, @basePrice, @supplierNotes,
+            @barcode, @brand, @category, @rpuMrp, @suggestedRetailPrice, @costNote,
+            @variantsJson, @supplierLocation, @deliveryCoverageJson, @onlineSellingRequested,
+            @productReadinessStatus
+          )
         `);
 
       const product = productResult.recordset[0];
+
+      // 1b. Insert image if provided
+      if (imageUrl && imageUrl.trim() !== '') {
+        await transaction.request()
+          .input('productId', sql.Int, product.ProductId)
+          .input('imageUrl', sql.NVarChar(500), imageUrl.trim())
+          .query(`
+            INSERT INTO dbo.ProductImages (ProductId, ImageUrl, IsPrimary, AltText)
+            VALUES (@productId, @imageUrl, 1, 'Primary Image')
+          `);
+      }
 
       // 2. Initialize ledgers (MASTER and SELL)
       await transaction.request()
@@ -59,6 +100,18 @@ exports.createProduct = async (req, res) => {
         productName: product.ProductName,
         basePrice: product.BasePrice,
         supplierNotes: product.SupplierNotes,
+        barcode: product.Barcode,
+        brand: product.Brand,
+        category: product.Category,
+        rpuMrp: product.RPU_MRP,
+        suggestedRetailPrice: product.SuggestedRetailPrice,
+        costNote: product.CostNote,
+        variantsJson: product.VariantsJson,
+        supplierLocation: product.SupplierLocation,
+        deliveryCoverageJson: product.DeliveryCoverageJson,
+        onlineSellingRequested: product.OnlineSellingRequested === 1 || product.OnlineSellingRequested === true,
+        productReadinessStatus: product.ProductReadinessStatus,
+        imageUrl: imageUrl || null,
         ledgers: [
           { ledgerType: 'MASTER', onHandQty: 0, reservedQty: 0 },
           { ledgerType: 'SELL', onHandQty: 0, reservedQty: 0 }
@@ -451,6 +504,12 @@ exports.getProducts = async (req, res) => {
                  p.Status AS status, p.QCStatus AS qcStatus, p.QCReason AS qcReason,
                  p.EnrichmentJson AS enrichmentJson, p.LastEnrichedAt AS lastEnrichedAt, p.CreatedAt AS createdAt,
                  p.BasePrice AS basePrice, p.SupplierNotes AS supplierNotes,
+                 p.Barcode AS barcode, p.Brand AS brand, p.Category AS category,
+                 p.RPU_MRP AS rpuMrp, p.SuggestedRetailPrice AS suggestedRetailPrice,
+                 p.CostNote AS costNote, p.VariantsJson AS variantsJson,
+                 p.SupplierLocation AS supplierLocation, p.DeliveryCoverageJson AS deliveryCoverageJson,
+                 p.OnlineSellingRequested AS onlineSellingRequested, p.ProductReadinessStatus AS productReadinessStatus,
+                 pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
                  COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved,
                  (
@@ -459,6 +518,7 @@ exports.getProducts = async (req, res) => {
                    WHERE o.ProductId = p.ProductId AND o.IsActive = 1
                  ) AS owners
           FROM dbo.Products p
+          LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
           LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
           ORDER BY p.ProductId DESC
@@ -472,7 +532,8 @@ exports.getProducts = async (req, res) => {
         return {
           ...row,
           enrichmentJson: undefined,
-          enrichment
+          enrichment,
+          onlineSellingRequested: row.onlineSellingRequested === 1 || row.onlineSellingRequested === true
         };
       });
  
@@ -486,10 +547,17 @@ exports.getProducts = async (req, res) => {
                  p.Status AS status, p.QCStatus AS qcStatus, p.QCReason AS qcReason,
                  p.EnrichmentJson AS enrichmentJson, p.LastEnrichedAt AS lastEnrichedAt, p.CreatedAt AS createdAt,
                  p.BasePrice AS basePrice, p.SupplierNotes AS supplierNotes,
+                 p.Barcode AS barcode, p.Brand AS brand, p.Category AS category,
+                 p.RPU_MRP AS rpuMrp, p.SuggestedRetailPrice AS suggestedRetailPrice,
+                 p.CostNote AS costNote, p.VariantsJson AS variantsJson,
+                 p.SupplierLocation AS supplierLocation, p.DeliveryCoverageJson AS deliveryCoverageJson,
+                 p.OnlineSellingRequested AS onlineSellingRequested, p.ProductReadinessStatus AS productReadinessStatus,
+                 pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
                  COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved
           FROM dbo.Products p
           INNER JOIN dbo.ProductOwnership o ON p.ProductId = o.ProductId
+          LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
           LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
           WHERE o.SupplierEmail = @email AND o.IsActive = 1
@@ -504,7 +572,8 @@ exports.getProducts = async (req, res) => {
         return {
           ...row,
           enrichmentJson: undefined,
-          enrichment
+          enrichment,
+          onlineSellingRequested: row.onlineSellingRequested === 1 || row.onlineSellingRequested === true
         };
       });
  
@@ -518,8 +587,13 @@ exports.getProducts = async (req, res) => {
                  p.Status AS status, p.QCStatus AS qcStatus, p.QCReason AS qcReason,
                  p.EnrichmentJson AS enrichmentJson, p.LastEnrichedAt AS lastEnrichedAt,
                  p.BasePrice AS basePrice, p.SupplierNotes AS supplierNotes,
+                 p.Barcode AS barcode, p.Brand AS brand, p.Category AS category,
+                 p.RPU_MRP AS rpuMrp, p.SuggestedRetailPrice AS suggestedRetailPrice,
+                 p.VariantsJson AS variantsJson, p.SupplierLocation AS supplierLocation,
+                 pi.ImageUrl AS imageUrl,
                  COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved
           FROM dbo.Products p
+          LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
           WHERE p.Status = 'ACTIVE' AND p.QCStatus = 'APPROVED'
           ORDER BY p.ProductId DESC

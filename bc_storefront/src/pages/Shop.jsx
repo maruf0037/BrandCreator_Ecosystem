@@ -136,6 +136,9 @@ export default function Shop({ currentUser }) {
 
   // Cart Functions
   const getProductPrice = (product) => {
+    if (product.retailPrice) return parseFloat(product.retailPrice);
+    if (product.suggestedRetailPrice) return parseFloat(product.suggestedRetailPrice);
+    if (product.rpuMrp) return parseFloat(product.rpuMrp);
     return product.basePrice ? parseFloat(product.basePrice) : ((product.productId * 250) + 1200);
   };
 
@@ -497,7 +500,7 @@ export default function Shop({ currentUser }) {
                             {/* Product Image */}
                             <div style={{ position: 'relative', height: '250px', overflow: 'hidden' }}>
                               <img
-                                src={`https://images.unsplash.com/photo-${1580000000000 + product.productId}?auto=format&fit=crop&q=80&w=600`}
+                                src={product.imageUrl || `https://images.unsplash.com/photo-${1580000000000 + product.productId}?auto=format&fit=crop&q=80&w=600`}
                                 onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&q=80&w=600'}
                                 alt={displayName}
                                 style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform 0.4s ease' }}

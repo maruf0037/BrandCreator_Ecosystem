@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrandCreator Ecosystem - সম্পূর্ণ প্ল্যাটফর্ম গাইড</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #1e3a8a;
+            --primary-light: #eff6ff;
+            --secondary-color: #0d9488;
+            --text-color: #1f2937;
+            --light-text: #4b5563;
+            --border-color: #e5e7eb;
+            --bg-color: #f9fafb;
+            --card-bg: #ffffff;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Hind Siliguri', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            font-size: 16px;
+            padding: 40px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--card-bg);
+            padding: 50px 60px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            border: 1px solid var(--border-color);
+        }
+
+        /* Title Page */
+        .title-page {
+            text-align: center;
+            padding: 60px 0 40px 0;
+            border-bottom: 2px solid var(--primary-color);
+            margin-bottom: 40px;
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .title-page h1 {
+            font-size: 36px;
+            color: var(--text-color);
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            font-size: 18px;
+            color: var(--light-text);
+            margin-bottom: 30px;
+        }
+
+        .meta-info {
+            font-size: 14px;
+            color: var(--light-text);
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+        }
+
+        .meta-item strong {
+            color: var(--primary-color);
+        }
+
+        /* Headings */
+        h2 {
+            font-size: 24px;
+            color: var(--primary-color);
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+        }
+
+        h3 {
+            font-size: 19px;
+            color: var(--secondary-color);
+            margin-top: 25px;
+            margin-bottom: 12px;
+            font-weight: 500;
+        }
+
+        p {
+            margin-bottom: 15px;
+            text-align: justify;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin-bottom: 20px;
+            padding-left: 25px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        /* Highlight Boxes */
+        .highlight-box {
+            background-color: var(--primary-light);
+            border-left: 4px solid var(--primary-color);
+            padding: 20px;
+            border-radius: 0 8px 8px 0;
+            margin: 25px 0;
+        }
+
+        .highlight-box p:last-child {
+            margin-bottom: 0;
+        }
+
+        .warning-box {
+            background-color: #fff7ed;
+            border-left: 4px solid #f97316;
+            padding: 20px;
+            border-radius: 0 8px 8px 0;
+            margin: 25px 0;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 25px 0;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: var(--primary-light);
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 60px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+            text-align: center;
+            font-size: 13px;
+            color: var(--light-text);
+        }
+
+        /* Flow Diagram representation */
+        .flow-container {
+            background: #f8fafc;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 25px;
+            margin: 25px 0;
+        }
+
+        .flow-step {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .flow-step:last-child {
+            margin-bottom: 0;
+        }
+
+        .step-number {
+            background-color: var(--primary-color);
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            margin-right: 15px;
+            flex-shrink: 0;
+        }
+
+        .step-text {
+            font-size: 15px;
+        }
+
+        /* Print styling optimization */
+        @media print {
+            body {
+                background-color: #ffffff;
+                color: #000000;
+                padding: 0;
+                font-size: 14pt;
+            }
+
+            .container {
+                box-shadow: none;
+                border: none;
+                padding: 0;
+                max-width: 100%;
+            }
+
+            h2, h3 {
+                page-break-after: avoid;
+            }
+
+            .highlight-box, .warning-box, .flow-container {
+                page-break-inside: avoid;
+            }
+
+            table {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Title Page -->
+        <div class="title-page">
+            <div class="logo">BrandCreator Ecosystem</div>
+            <h1>আধুনিক সাপ্লাই চেইন ও ডাবল-এন্ট্রি ইনভেন্টরি লেজার প্ল্যাটফর্ম</h1>
+            <div class="subtitle">সম্পূর্ণ ব্যবসায়িক ও কারিগরি বিবরণী গাইড</div>
+            <div class="meta-info">
+                <div class="meta-item">সংস্করণ: <strong>১.০ (রিলিজ সংস্করণ)</strong></div>
+                <div class="meta-item">তারিখ: <strong>মে ২৩, ২০২৬</strong></div>
+                <div class="meta-item">লেখক: <strong>Antigravity AI</strong></div>
+            </div>
+        </div>
+
+        <!-- Section 1: Overview -->
+        <h2>১. প্ল্যাটফর্ম পরিচিতি (Platform Overview)</h2>
+        <p>
+            <strong>BrandCreator Ecosystem</strong> হলো একটি নিরাপদ, স্বচ্ছ এবং এন্টারপ্রাইজ-গ্রেড ডিজিটাল ডিস্ট্রিবিউশন নেটওয়ার্ক। এটি মূলত উৎপাদনকারী বা সরবরাহকারী (Supplier), সিস্টেম অ্যাডমিন (Admin) এবং রিটেইল বিক্রেতাদের (Shop/Retailer) একটি সমন্বিত ট্রানজেকশনাল চ্যানেলে যুক্ত করে।
+        </p>
+        <p>
+            প্রচলিত ই-কমার্স বা ইনভেন্টরি ম্যানেজমেন্ট সফটওয়্যারগুলোতে স্টকের হিসাবে গরমিল বা লেনদেনের অস্বচ্ছতা দূর করতে এতে ব্যবহার করা হয়েছে ব্যাংকিং খাতের অত্যন্ত জনপ্রিয় <strong>ডাবল-এন্ট্রি ইনভেন্টরি লেজার (Double-Entry Inventory Ledger)</strong> প্রযুক্তি। ফলে প্ল্যাটফর্মে প্রতিটি পণ্যের লেনদেন ও স্থানান্তরের অডিট ট্রেইল বা নিখুঁত হিসাব সংরক্ষিত থাকে।
+        </p>
+
+        <div class="highlight-box">
+            <p><strong>সহজ কথায়:</strong></p>
+            <p>
+                এটি এমন একটি প্ল্যাটফর্ম যেখানে সরবরাহকারী পণ্য তৈরি করবেন, অ্যাডমিন তার গুণগত মান (QC) নিশ্চিত করবেন, সরবরাহকারী তার ভৌত বা মাস্টার স্টক থেকে বিক্রির জন্য নির্দিষ্ট পরিমাণ স্টক ডিস্ট্রিবিউশন চ্যানেলে পাঠাবেন এবং দোকানদার সেই স্টক থেকে সরাসরি লাইভ পেমেন্টের মাধ্যমে পণ্য কিনে নেবেন—সবকিছুই ঘটবে সম্পূর্ণ স্বয়ংক্রিয় ও নিরাপদ ডাবল-এন্ট্রি লেজারের আওতায়।
+            </p>
+        </div>
+
+        <!-- Section 2: Core Features -->
+        <h2>২. প্ল্যাটফর্মের প্রধান বৈশিষ্ট্যসমূহ (Key Core Features)</h2>
+        <ul>
+            <li><strong>ডাবল-এন্ট্রি লেজার প্রযুক্তি (Double-Entry Ledger):</strong> প্রতিটি স্টক স্থানান্তরের সময় সিস্টেমে একটি নির্দিষ্ট উৎস ডেবিট (Debit) এবং গন্তব্য ক্রেডিট (Credit) হয়। কোনো প্রকার ডাটা টেম্পারিং বা গরমিল করার সুযোগ নেই।</li>
+            <li><strong>দ্বি-স্তরীয় মান নিয়ন্ত্রণ (Two-Tier Quality Control):</strong> সরবরাহকারীর তৈরি করা প্রতিটি পণ্য বিক্রয়যোগ্য হওয়ার আগে অ্যাডমিন কর্তৃক বাধ্যতামূলক কোয়ালিটি কন্ট্রোল (QC) বা অডিট সম্পন্ন হতে হবে।</li>
+            <li><strong>সুরক্ষিত রোল-বেসড অ্যাক্সেস (RBAC):</strong> সরবরাহকারী, অ্যাডমিন এবং দোকানদারদের জন্য পৃথক ড্যাশবোর্ড এবং এক্সেস কন্ট্রোল।</li>
+            <li><strong>অটোমেটেড পেমেন্ট রিকনসিলিয়েশন:</strong> দোকানদার পণ্য কেনার পর অ্যাডমিন পেমেন্ট অনুমোদন করার সাথে সাথে সিস্টেম স্বয়ংক্রিয়ভাবে স্টক ব্যালেন্স এবং লেজার সিঙ্ক করে দেয়।</li>
+            <li><strong>উইন্ডোজ সার্ভার অপ্টিমাইজড (Windows Server Ready):</strong> IIS (Internet Information Services) রিভার্স প্রক্সি এবং উইন্ডোজ সার্ভিসের জন্য এটি শতভাগ অপ্টিমাইজড।</li>
+        </ul>
+
+        <!-- Section 3: Portals -->
+        <h2>৩. ব্যবহারকারীর ভূমিকা ও পোর্টালসমূহ (Portals & Roles)</h2>
+        <p>প্ল্যাটফর্মটিতে তিনটি মূল ড্যাশবোর্ড রয়েছে, যা প্রতিটি ব্যবহারকারীকে তাদের নির্ধারিত কাজ সহজে করতে সাহায্য করে:</p>
+
+        <h3>ক) সরবরাহকারী পোর্টাল (Supplier Portal)</h3>
+        <p>সরবরাহকারীরা তাদের পণ্যের যাবতীয় জীবনচক্র এখানে নিয়ন্ত্রণ করেন।</p>
+        <ul>
+            <li>নতুন পণ্য যোগ করা ও বিবরণী তৈরি।</li>
+            <li>অ্যাডমিনের কাছে পণ্যের QC অনুমোদনের জন্য প্রেরণ।</li>
+            <li>অনুমোদিত পণ্যের মাস্টার স্টক (Master Stock) এন্ট্রি করা।</li>
+            <li>মাস্টার স্টক থেকে বিক্রয়যোগ্য স্টক বা সেল স্টকে (Sell Stock) পণ্য হস্তান্তরের অনুরোধ পাঠানো।</li>
+        </ul>
+
+        <h3>খ) অ্যাডমিন ড্যাশবোর্ড (Admin Dashboard)</h3>
+        <p>অ্যাডমিন হলেন সম্পূর্ণ ইকোসিস্টেমের প্রধান নিয়ন্ত্রক এবং নিরীক্ষক।</p>
+        <ul>
+            <li>পণ্যের মান যাচাই ও অনুমোদন (QC Approval)।</li>
+            <li>সরবরাহকারীর পাঠানো স্টক ট্রান্সফারের অনুরোধ যাচাই ও অনুমোদন।</li>
+            <li>দোকানদার বা রিটেলারের বিল পেমেন্ট ভেরিফিকেশন ও অর্ডার ডেলিভারি নিশ্চিতকরণ।</li>
+            <li>লাইভ ইনভেন্টরি ট্রেইল ও আর্থিক হিসাব মনিটর করা।</li>
+        </ul>
+
+        <h3>গ) খুচরা বিক্রেতা বা শপ পোর্টাল (Shop Portal)</h3>
+        <p>পণ্য বিক্রয়ের মূল খুচরা চ্যানেল হলো এটি।</p>
+        <ul>
+            <li>অ্যাডমিন অনুমোদিত এবং সরবরাহকারীর বিক্রয়যোগ্য স্টকে থাকা লাইভ প্রোডাক্ট ক্যাটালগ ব্রাউজিং।</li>
+            <li>সরাসরি কার্ট ও অর্ডার ম্যানেজমেন্ট।</li>
+            <li>অনলাইন/ম্যানুয়াল পেমেন্ট অপশন এবং রিয়েল-টাইম অর্ডার স্ট্যাটাস ট্র্যাকিং।</li>
+        </ul>
+
+        <!-- Section 4: Operational Flow -->
+        <h2>৪. আদর্শ ব্যবসায়িক কার্যপ্রবাহ (Step-by-Step Demo Flow)</h2>
+        <p>সিস্টেমটি লাইভ ডেমোতে কীভাবে পরিচালিত হয় তার নিখুঁত সিকোয়েন্স নিচে উল্লেখ করা হলো:</p>
+
+        <div class="flow-container">
+            <div class="flow-step">
+                <div class="step-number">১</div>
+                <div class="step-text"><strong>Supplier:</strong> একটি পণ্যের খসড়া বা ড্রাফট তৈরি করে অ্যাডমিনের কাছে QC সাবমিট করেন।</div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">২</div>
+                <div class="step-text"><strong>Admin:</strong> পণ্যটির গুণগত মান যাচাই করে ড্যাশবোর্ড থেকে তা অনুমোদন (Approve) করেন।</div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">৩</div>
+                <div class="step-text"><strong>Supplier:</strong> অনুমোদিত পণ্যটির জন্য ভৌত মাস্টার স্টকে (Master Stock) নতুন পরিমাণ যোগ করেন।</div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">৪</div>
+                <div class="step-text"><strong>Supplier:</strong> মাস্টার স্টক থেকে বিক্রয়যোগ্য শপ ইনভেন্টরিতে স্টক স্থানান্তরের অনুরোধ পাঠান।</div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">৫</div>
+                <div class="step-text"><strong>Admin:</strong> স্থানান্তরের অনুরোধটি পর্যালোচনা করে অনুমোদন দেন, যা সরাসরি সেল স্টক (Sell Stock) আপডেট করে।</div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">৬</div>
+                <div class="step-text"><strong>Shop/Retailer:</strong> শপ পোর্টাল থেকে সেই পণ্যটি অর্ডার করেন এবং অ্যাডমিনকে পেমেন্ট পাঠান।</div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">৭</div>
+                <div class="step-text"><strong>Admin:</strong> পেমেন্ট নিশ্চিত করেন। ডাটাবেস লেজার ট্রানজেকশন সফলভাবে স্টকের হিসাব সিঙ্ক করে।</div>
+            </div>
+        </div>
+
+        <!-- Section 5: Architecture -->
+        <h2>৫. কারিগরি রূপরেখা (Technical Overview)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>কম্পোনেন্ট</th>
+                    <th>ব্যবহৃত প্রযুক্তি</th>
+                    <th>ভূমিকা</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Frontend Portal</strong></td>
+                    <td>React.js (Vite), CSS3, Google Fonts</td>
+                    <td>অত্যন্ত দ্রুতগতির এবং প্রিমিয়াম ডিজাইনের তিনটি রেসপন্সিভ ওয়েব পোর্টাল।</td>
+                </tr>
+                <tr>
+                    <td><strong>Backend Engine</strong></td>
+                    <td>Node.js, Express.js</td>
+                    <td>লেজার ব্যবসায়িক লজিক প্রসেস এবং সিকিউরিটি গেটওয়ে হিসেবে কাজ করে।</td>
+                </tr>
+                <tr>
+                    <td><strong>Database</strong></td>
+                    <td>Microsoft SQL Server (MSSQL)</td>
+                    <td>Stored Procedures ব্যবহার করে দ্রুতগতির ট্রানজেকশনাল হিসাব ও ডাবল-এন্ট্রি ইনভেন্টরি লেজার আপডেট।</td>
+                </tr>
+                <tr>
+                    <td><strong>Hosting Target</strong></td>
+                    <td>Windows Server IIS + Node Service</td>
+                    <td>NSSM এবং IIS URL Rewrite-এর মাধ্যমে স্থিতিশীল ও অটোমেটেড হোস্টিং।</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Section 6: Next Roadmap -->
+        <h2>৬. প্ল্যাটফর্মের পরবর্তী উন্নয়নের ধাপসমূহ (Upcoming Roadmap)</h2>
+        <p>সফল বেসলাইন রিলিজের পর প্ল্যাটফর্মটির পরবর্তী ফিচারগুলো অত্যন্ত রোমাঞ্চকর:</p>
+        <ol>
+            <li><strong>বিকাশ ও রকেট গেটওয়ে সংযোজন:</strong> সরাসরি গ্রাহক ও রিটেইলার পেমেন্টের জন্য দেশের শীর্ষ পেমেন্ট এপিআইগুলোর একীভূতকরণ।</li>
+            <li><strong>গুগল ড্রাইভ ইন্টিগ্রেশন:</strong> সরবরাহকারীর পণ্যের ছবি এবং ডায়াগ্রাম ক্লাউড স্টোরেজে ব্যাকআপ হিসেবে সংরক্ষণের ব্যবস্থা।</li>
+            <li><strong>সম্পূর্ণ ইউজার অ্যাকাউন্ট ও রোল ম্যানেজমেন্ট:</strong> রিয়েল অ্যাকাউন্ট সাইনআপ, পাসওয়ার্ড হ্যাশিং এবং ওটিপি (OTP) ভিত্তিক টু-ফ্যাক্টর লগইন।</li>
+            <li><strong>অডিটিং ও এক্সপোর্ট ড্যাশবোর্ড:</strong> কাস্টম গ্রাফিক্যাল চার্ট এবং পিডিএফ/এক্সেল ফাইলে লেজার ডাটা রিপোর্টিং ডাউনলোড।</li>
+        </ol>
+
+        <div class="warning-box">
+            <p><strong>নিরাপত্তা ও গোপনীয়তা সতর্কতা:</strong></p>
+            <p>
+                প্রডাকশন এনভায়রনমেন্টে কখনই ডাটাবেসের <code>sa</code> (System Administrator) লগইন ব্যবহার করবেন না। সর্বদা সীমিত সুবিধাযুক্ত <code>BrandCreator_AppUser</code> লগইন ব্যবহার করুন এবং ডাটাবেস ইন্টিগ্রিটি বজায় রাখুন।
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>© ২০২৬ BrandCreator Ecosystem | সর্বস্বত্ব সংরক্ষিত।</p>
+            <p>ডিজিটাল কমার্স ও ডাবল-এন্ট্রি ইনভেন্টরি ট্র্যাকিংয়ের ভবিষ্যৎ রূপরেখা।</p>
+        </div>
+    </div>
+</body>
+</html>

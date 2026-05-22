@@ -27,6 +27,17 @@ export default function SupplierDashboard({ currentUser }) {
   const [newProductName, setNewProductName] = useState('');
   const [newBasePrice, setNewBasePrice] = useState('');
   const [newSupplierNotes, setNewSupplierNotes] = useState('');
+  const [newBarcode, setNewBarcode] = useState('');
+  const [newBrand, setNewBrand] = useState('');
+  const [newCategory, setNewCategory] = useState('');
+  const [newRpuMrp, setNewRpuMrp] = useState('');
+  const [newSuggestedRetailPrice, setNewSuggestedRetailPrice] = useState('');
+  const [newCostNote, setNewCostNote] = useState('');
+  const [newVariantsJson, setNewVariantsJson] = useState('');
+  const [newSupplierLocation, setNewSupplierLocation] = useState('');
+  const [newDeliveryCoverageJson, setNewDeliveryCoverageJson] = useState('');
+  const [newOnlineSellingRequested, setNewOnlineSellingRequested] = useState(true);
+  const [newImageUrl, setNewImageUrl] = useState('');
   const [creating, setCreating] = useState(false);
 
   // Transfer Request Form State
@@ -97,13 +108,35 @@ export default function SupplierDashboard({ currentUser }) {
         sku: newSku.toUpperCase().trim(),
         productName: newProductName.trim(),
         basePrice: newBasePrice ? parseFloat(newBasePrice) : null,
-        supplierNotes: newSupplierNotes.trim() || null
+        supplierNotes: newSupplierNotes.trim() || null,
+        barcode: newBarcode.trim() || null,
+        brand: newBrand.trim() || null,
+        category: newCategory.trim() || null,
+        rpuMrp: newRpuMrp ? parseFloat(newRpuMrp) : null,
+        suggestedRetailPrice: newSuggestedRetailPrice ? parseFloat(newSuggestedRetailPrice) : null,
+        costNote: newCostNote.trim() || null,
+        variantsJson: newVariantsJson.trim() || null,
+        supplierLocation: newSupplierLocation.trim() || null,
+        deliveryCoverageJson: newDeliveryCoverageJson.trim() || null,
+        onlineSellingRequested: newOnlineSellingRequested,
+        imageUrl: newImageUrl.trim() || null
       });
       showToast(`Product ${newProductName} initialized and double ledgers registered!`);
       setNewSku('');
       setNewProductName('');
       setNewBasePrice('');
       setNewSupplierNotes('');
+      setNewBarcode('');
+      setNewBrand('');
+      setNewCategory('');
+      setNewRpuMrp('');
+      setNewSuggestedRetailPrice('');
+      setNewCostNote('');
+      setNewVariantsJson('');
+      setNewSupplierLocation('');
+      setNewDeliveryCoverageJson('');
+      setNewOnlineSellingRequested(true);
+      setNewImageUrl('');
       fetchSupplierData();
     } catch (err) {
       setError(err.message || 'Failed to create new product. Check for duplicate SKU.');
@@ -518,58 +551,198 @@ export default function SupplierDashboard({ currentUser }) {
                       <PlusCircle style={{ color: 'hsl(var(--secondary))' }} size={20} />
                       Initialize New Product Ledger
                     </h3>
-                    <form onSubmit={handleCreateProduct} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px', alignItems: 'flex-end' }}>
+                    <form onSubmit={handleCreateProduct} style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+                      {/* Section 1: Basic Identity */}
                       <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>SKU CODE</label>
-                        <input 
-                          type="text"
-                          required
-                          value={newSku}
-                          onChange={(e) => setNewSku(e.target.value)}
-                          placeholder="e.g. KURTI-ROSE-M"
-                          className="styled-input"
-                        />
-                      </div>
-                      
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>PRODUCT NAME</label>
-                        <input 
-                          type="text"
-                          required
-                          value={newProductName}
-                          onChange={(e) => setNewProductName(e.target.value)}
-                          placeholder="e.g. Soft Rose Daily Wear Kurti"
-                          className="styled-input"
-                        />
+                        <h4 style={{ fontSize: '0.85rem', color: 'hsl(var(--secondary))', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', fontWeight: '800', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                          1. Product Identity & Category
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>SKU CODE</label>
+                            <input 
+                              type="text"
+                              required
+                              value={newSku}
+                              onChange={(e) => setNewSku(e.target.value)}
+                              placeholder="e.g. KURTI-ROSE-M"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>PRODUCT NAME</label>
+                            <input 
+                              type="text"
+                              required
+                              value={newProductName}
+                              onChange={(e) => setNewProductName(e.target.value)}
+                              placeholder="e.g. Soft Rose Daily Wear Kurti"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>BARCODE</label>
+                            <input 
+                              type="text"
+                              value={newBarcode}
+                              onChange={(e) => setNewBarcode(e.target.value)}
+                              placeholder="e.g. 8801234567890"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>BRAND</label>
+                            <input 
+                              type="text"
+                              value={newBrand}
+                              onChange={(e) => setNewBrand(e.target.value)}
+                              placeholder="e.g. Zara, BrandCreator Wear"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>CATEGORY</label>
+                            <input 
+                              type="text"
+                              value={newCategory}
+                              onChange={(e) => setNewCategory(e.target.value)}
+                              placeholder="e.g. Clothing > Kurti"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>PRODUCT IMAGE URL</label>
+                            <input 
+                              type="text"
+                              value={newImageUrl}
+                              onChange={(e) => setNewImageUrl(e.target.value)}
+                              placeholder="e.g. https://images.unsplash.com/photo-..."
+                              className="styled-input"
+                            />
+                          </div>
+                        </div>
                       </div>
 
+                      {/* Section 2: Pricing & Sourcing */}
                       <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>BASE PRICE (BDT)</label>
-                        <input 
-                          type="number"
-                          step="0.01"
-                          required
-                          value={newBasePrice}
-                          onChange={(e) => setNewBasePrice(e.target.value)}
-                          placeholder="e.g. 1250.00"
-                          className="styled-input"
-                        />
+                        <h4 style={{ fontSize: '0.85rem', color: 'hsl(var(--secondary))', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', fontWeight: '800', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                          2. Sourcing & Pricing Details
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>BASE PRICE / PAYABLE (৳)</label>
+                            <input 
+                              type="number"
+                              step="0.01"
+                              required
+                              value={newBasePrice}
+                              onChange={(e) => setNewBasePrice(e.target.value)}
+                              placeholder="e.g. 1250.00"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>RPU / MRP (৳)</label>
+                            <input 
+                              type="number"
+                              step="0.01"
+                              value={newRpuMrp}
+                              onChange={(e) => setNewRpuMrp(e.target.value)}
+                              placeholder="e.g. 1850.00"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>SUGGESTED RETAIL PRICE (৳)</label>
+                            <input 
+                              type="number"
+                              step="0.01"
+                              value={newSuggestedRetailPrice}
+                              onChange={(e) => setNewSuggestedRetailPrice(e.target.value)}
+                              placeholder="e.g. 1750.00"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>COST NOTE / BREAKDOWN</label>
+                            <input 
+                              type="text"
+                              value={newCostNote}
+                              onChange={(e) => setNewCostNote(e.target.value)}
+                              placeholder="e.g. Packaging includes premium box (৳50)"
+                              className="styled-input"
+                            />
+                          </div>
+                        </div>
                       </div>
 
+                      {/* Section 3: Logistics & Variants */}
                       <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>SUPPLIER NOTES/DETAILS</label>
-                        <input 
-                          type="text"
-                          value={newSupplierNotes}
-                          onChange={(e) => setNewSupplierNotes(e.target.value)}
-                          placeholder="e.g. 100% premium cotton weave"
-                          className="styled-input"
-                        />
+                        <h4 style={{ fontSize: '0.85rem', color: 'hsl(var(--secondary))', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px', fontWeight: '800', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                          3. Variants & Fulfillment
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>VARIANTS / SIZE / COLOR NOTES</label>
+                            <input 
+                              type="text"
+                              value={newVariantsJson}
+                              onChange={(e) => setNewVariantsJson(e.target.value)}
+                              placeholder="e.g. Red: M, L | Blue: S, M"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>SUPPLIER LOCATION / HUB</label>
+                            <input 
+                              type="text"
+                              value={newSupplierLocation}
+                              onChange={(e) => setNewSupplierLocation(e.target.value)}
+                              placeholder="e.g. Uttara Dhaka Warehouse"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>DELIVERY COVERAGE</label>
+                            <input 
+                              type="text"
+                              value={newDeliveryCoverageJson}
+                              onChange={(e) => setNewDeliveryCoverageJson(e.target.value)}
+                              placeholder="e.g. Nationwide, Inside Dhaka Only"
+                              className="styled-input"
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>SUPPLIER REMARKS / NOTES</label>
+                            <input 
+                              type="text"
+                              value={newSupplierNotes}
+                              onChange={(e) => setNewSupplierNotes(e.target.value)}
+                              placeholder="e.g. 100% premium cotton weave"
+                              className="styled-input"
+                            />
+                          </div>
+                        </div>
                       </div>
 
-                      <button type="submit" disabled={creating} className="btn-primary" style={{ padding: '12px 20px', fontSize: '0.9rem', borderRadius: '10px', height: '46px', width: '100%', background: 'linear-gradient(135deg, hsl(var(--secondary)), hsl(var(--secondary) / 0.8))', color: '#fff', boxShadow: '0 4px 15px hsl(var(--secondary) / 0.2)' }}>
-                        {creating ? 'Initializing...' : 'Create Double Ledger'}
-                      </button>
+                      {/* Section 4: Submission & Flags */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '20px', background: 'rgba(255, 255, 255, 0.02)', padding: '18px 24px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <input 
+                            type="checkbox"
+                            id="onlineSellingRequested"
+                            checked={newOnlineSellingRequested}
+                            onChange={(e) => setNewOnlineSellingRequested(e.target.checked)}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'hsl(var(--secondary))' }}
+                          />
+                          <label htmlFor="onlineSellingRequested" style={{ fontSize: '0.85rem', color: '#fff', fontWeight: '600', cursor: 'pointer' }}>
+                            Online Selling Requested (Auto-approve for E-Store storefront list once QC approved)
+                          </label>
+                        </div>
+                        <button type="submit" disabled={creating} className="btn-primary" style={{ padding: '12px 30px', fontSize: '0.9rem', borderRadius: '10px', height: '46px', background: 'linear-gradient(135deg, hsl(var(--secondary)), hsl(var(--secondary) / 0.8))', color: '#fff', boxShadow: '0 4px 15px hsl(var(--secondary) / 0.2)', fontWeight: '700', border: 'none', cursor: 'pointer' }}>
+                          {creating ? 'Initializing...' : 'Create Double Ledger & Product'}
+                        </button>
+                      </div>
                     </form>
                   </div>
 
@@ -597,29 +770,68 @@ export default function SupplierDashboard({ currentUser }) {
                       </thead>
                       <tbody>
                         {products.length === 0 ? (
-                          <tr>
-                            <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
-                              You don't own any product ledgers. Use the initialization form above!
-                            </td>
-                          </tr>
+                           <tr>
+                             <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
+                               You don't own any product ledgers. Use the initialization form above!
+                             </td>
+                           </tr>
                         ) : (
-                          products.map(p => (
-                            <tr key={p.productId} className="interactive-row">
-                              <td style={{ fontWeight: '700', color: '#fff' }}>#{p.productId}</td>
-                              <td>
-                                <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{p.productName}</div>
-                                <div style={{ fontSize: '0.8rem', color: 'hsl(var(--text-muted))', fontFamily: 'monospace', marginTop: '2px' }}>{p.sku}</div>
-                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
-                                  <span style={{ fontSize: '0.72rem', color: 'hsl(var(--primary))', background: 'rgba(16, 185, 129, 0.08)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(16, 185, 129, 0.15)', fontWeight: '700' }}>
-                                    Price: {p.basePrice ? `৳${p.basePrice}` : '৳0.00'}
-                                  </span>
-                                  {p.supplierNotes && (
-                                    <span style={{ fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontStyle: 'italic', background: 'rgba(255,255,255,0.02)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }} title={p.supplierNotes}>
-                                      Note: {p.supplierNotes.length > 30 ? p.supplierNotes.slice(0, 30) + '...' : p.supplierNotes}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
+                           products.map(p => (
+                             <tr key={p.productId} className="interactive-row">
+                               <td style={{ fontWeight: '700', color: '#fff' }}>#{p.productId}</td>
+                               <td>
+                                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                   {p.imageUrl ? (
+                                     <img 
+                                       src={p.imageUrl} 
+                                       alt={p.productName} 
+                                       style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.1)' }} 
+                                     />
+                                   ) : (
+                                     <div style={{ width: '48px', height: '48px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.2)', fontSize: '0.75rem' }}>
+                                       No Image
+                                     </div>
+                                   )}
+                                   <div>
+                                     <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{p.productName}</div>
+                                     <div style={{ fontSize: '0.8rem', color: 'hsl(var(--text-muted))', fontFamily: 'monospace', marginTop: '2px' }}>{p.sku}</div>
+                                     
+                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
+                                       {p.category && (
+                                         <span style={{ fontSize: '0.7rem', color: '#60a5fa', background: 'rgba(96, 165, 250, 0.08)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(96, 165, 250, 0.15)', fontWeight: '600' }}>
+                                           {p.category}
+                                         </span>
+                                       )}
+                                       {p.brand && (
+                                         <span style={{ fontSize: '0.7rem', color: '#c084fc', background: 'rgba(192, 132, 252, 0.08)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(192, 132, 252, 0.15)', fontWeight: '600' }}>
+                                           {p.brand}
+                                         </span>
+                                       )}
+                                       {p.barcode && (
+                                         <span style={{ fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', background: 'rgba(255, 255, 255, 0.05)', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)', fontFamily: 'monospace' }}>
+                                           Code: {p.barcode}
+                                         </span>
+                                       )}
+                                     </div>
+                                   </div>
+                                 </div>
+                                 
+                                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px', paddingLeft: p.imageUrl ? '60px' : '0px' }}>
+                                   <span style={{ fontSize: '0.72rem', color: 'hsl(var(--primary))', background: 'rgba(16, 185, 129, 0.08)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(16, 185, 129, 0.15)', fontWeight: '700' }}>
+                                     Base Price: {p.basePrice ? `৳${p.basePrice}` : '৳0.00'}
+                                   </span>
+                                   {p.rpuMrp && (
+                                     <span style={{ fontSize: '0.72rem', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.08)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.15)', fontWeight: '700' }}>
+                                       RPU/MRP: ৳{p.rpuMrp}
+                                     </span>
+                                   )}
+                                   {p.suggestedRetailPrice && (
+                                     <span style={{ fontSize: '0.72rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.08)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(16, 185, 129, 0.15)', fontWeight: '700' }}>
+                                       SRP: ৳{p.suggestedRetailPrice}
+                                     </span>
+                                   )}
+                                 </div>
+                               </td>
                               <td>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   <span className={`pill-badge ${

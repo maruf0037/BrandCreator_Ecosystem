@@ -38,6 +38,9 @@ router.post('/orders/:orderRef/confirm', requireRole(['Admin', 'SuperAdmin', 'Pa
 router.post('/orders/:orderRef/cancel', requireRole(['Customer', 'Supplier', 'Admin', 'SuperAdmin', 'PaymentWebhook']), orderController.cancelOrder);
 router.get('/orders', requireRole(['Admin', 'SuperAdmin', 'Supplier', 'Customer']), orderController.getOrders);
 router.get('/orders/:orderRef', requireRole(['Customer', 'Supplier', 'Admin', 'SuperAdmin']), orderController.getOrderDetails);
+router.post('/orders/:orderRef/payment-evidence', requireRole(['Customer', 'Supplier', 'Admin', 'SuperAdmin']), orderController.submitPaymentEvidence);
+router.get('/orders/:orderRef/payment-evidence', requireRole(['Customer', 'Supplier', 'Admin', 'SuperAdmin']), orderController.getPaymentEvidence);
+router.post('/orders/:orderRef/payment-review', requireRole(['Admin', 'SuperAdmin']), orderController.reviewPaymentEvidence);
 router.get('/orders/:orderRef/events', requireRole(['Admin', 'SuperAdmin']), orderController.getOrderEvents);
 router.get('/outbox', requireRole(['Admin', 'SuperAdmin']), orderController.getOutboxEvents);
 router.get('/outbox/pending', requireRole(['SystemWorker', 'Admin', 'SuperAdmin']), orderController.getPendingOutbox);

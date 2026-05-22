@@ -190,7 +190,7 @@ exports.confirmOrder = async (req, res) => {
       // Get order details
       const orderRes = await transaction.request()
         .input('ref', sql.NVarChar(100), orderRef)
-        .query('SELECT OrderId, Status FROM dbo.Orders WHERE OrderRef = @ref');
+        .query('SELECT OrderId, Status, PaymentStatus, TotalAmount, PaidAmount FROM dbo.Orders WHERE OrderRef = @ref');
 
       if (orderRes.recordset.length === 0) {
         return res.status(404).json({ error: 'NOT_FOUND', message: 'Order not found' });
@@ -214,6 +214,37 @@ exports.confirmOrder = async (req, res) => {
 
       if (order.Status !== 'PENDING') {
         return res.status(400).json({ error: 'INVALID_STATE', message: `Order cannot be confirmed because it is in state: ${order.Status}` });
+      }
+
+      // Check payment status or manual admin override with review note
+      const isVerified = order.PaymentStatus === 'PAYMENT_VERIFIED';
+      const manualReviewNote = req.body.manualReviewNote || req.body.overrideNote || payload?.manualReviewNote;
+      const isManualOverride = Boolean(manualReviewNote && (req.user?.role === 'Admin' || req.user?.role === 'SuperAdmin'));
+
+      if (!isVerified && !isManualOverride) {
+        await transaction.rollback();
+        return res.status(400).json({
+          error: 'PAYMENT_NOT_VERIFIED',
+          message: 'Confirm payment is only allowed if payment status is PAYMENT_VERIFIED or admin manual review note is supplied.'
+        });
+      }
+
+      // If manual override is used, update database fields within the transaction
+      if (isManualOverride && !isVerified) {
+        await transaction.request()
+          .input('ref', sql.NVarChar(100), orderRef)
+          .input('note', sql.NVarChar(1000), manualReviewNote)
+          .input('reviewer', sql.NVarChar(255), email)
+          .query(`
+            UPDATE dbo.Orders 
+            SET PaymentStatus = 'PAYMENT_VERIFIED', 
+                ManualReviewNote = @note, 
+                PaymentReviewedByEmail = @reviewer, 
+                PaymentReviewedAt = SYSUTCDATETIME(),
+                PaidAmount = TotalAmount,
+                PaidAt = SYSUTCDATETIME()
+            WHERE OrderRef = @ref
+          `);
       }
 
       // Fetch Items
@@ -386,7 +417,14 @@ exports.getOrderDetails = async (req, res) => {
     
     const orderRes = await pool.request()
       .input('ref', sql.NVarChar(100), orderRef)
-      .query('SELECT OrderId, OrderRef, CustomerEmail, Status, TotalAmount, Currency FROM dbo.Orders WHERE OrderRef = @ref');
+      .query(`
+        SELECT OrderId, OrderRef, CustomerEmail, Status, TotalAmount, Currency,
+               PaymentEvidence, PaymentProvider, TransactionId, PaidAmount, PaymentStatus,
+               GatewaySignatureStatus, ManualReviewNote, PaymentSubmittedByEmail, PaymentReviewedByEmail,
+               PaidAt, PaymentReviewedAt
+        FROM dbo.Orders 
+        WHERE OrderRef = @ref
+      `);
 
     if (orderRes.recordset.length === 0) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'Order not found' });
@@ -402,6 +440,19 @@ exports.getOrderDetails = async (req, res) => {
       orderRef: order.OrderRef,
       status: order.Status,
       customerEmail: order.CustomerEmail,
+      totalAmount: order.TotalAmount,
+      currency: order.Currency,
+      paymentEvidence: order.PaymentEvidence,
+      paymentProvider: order.PaymentProvider,
+      transactionId: order.TransactionId,
+      paidAmount: order.PaidAmount,
+      paymentStatus: order.PaymentStatus,
+      gatewaySignatureStatus: order.GatewaySignatureStatus,
+      manualReviewNote: order.ManualReviewNote,
+      paymentSubmittedByEmail: order.PaymentSubmittedByEmail,
+      paymentReviewedByEmail: order.PaymentReviewedByEmail,
+      paidAt: order.PaidAt,
+      paymentReviewedAt: order.PaymentReviewedAt,
       items: itemsRes.recordset
     });
   } catch (err) {
@@ -617,10 +668,24 @@ exports.paymentWebhook = async (req, res) => {
               .execute('dbo.sp_InventoryApplyTransaction');
           }
 
-          // Update Status
+          // Update Status and Payment Details
           await transaction.request()
             .input('ref', sql.NVarChar(100), orderRef)
-            .query("UPDATE dbo.Orders SET Status = 'CONFIRMED', UpdatedAt = SYSUTCDATETIME() WHERE OrderRef = @ref");
+            .input('provider', sql.VarChar(50), upperProvider)
+            .input('txn', sql.VarChar(100), eventRef)
+            .input('amount', sql.Decimal(18, 2), amount || 0)
+            .query(`
+              UPDATE dbo.Orders 
+              SET Status = 'CONFIRMED', 
+                  PaymentStatus = 'PAYMENT_VERIFIED',
+                  PaymentProvider = @provider,
+                  TransactionId = @txn,
+                  PaidAmount = @amount,
+                  PaidAt = SYSUTCDATETIME(),
+                  GatewaySignatureStatus = 'VERIFIED',
+                  UpdatedAt = SYSUTCDATETIME() 
+              WHERE OrderRef = @ref
+            `);
 
           // Outbox
           await transaction.request()
@@ -882,7 +947,9 @@ exports.getOrders = async (req, res) => {
       result = await pool.request()
         .query(`
           SELECT OrderId AS orderId, OrderRef AS orderRef, CustomerEmail AS customerEmail, 
-                 Status AS status, TotalAmount AS totalAmount, Currency AS currency, CreatedAt AS createdAt
+                 Status AS status, TotalAmount AS totalAmount, Currency AS currency, CreatedAt AS createdAt,
+                 PaymentStatus AS paymentStatus, PaymentProvider AS paymentProvider, TransactionId AS transactionId,
+                 PaidAmount AS paidAmount, PaidAt AS paidAt
           FROM dbo.Orders
           ORDER BY OrderId DESC
         `);
@@ -891,7 +958,9 @@ exports.getOrders = async (req, res) => {
         .input('email', sql.NVarChar(255), userEmail)
         .query(`
           SELECT DISTINCT o.OrderId AS orderId, o.OrderRef AS orderRef, o.CustomerEmail AS customerEmail, 
-                          o.Status AS status, o.TotalAmount AS totalAmount, o.Currency AS currency, o.CreatedAt AS createdAt
+                          o.Status AS status, o.TotalAmount AS totalAmount, o.Currency AS currency, o.CreatedAt AS createdAt,
+                          o.PaymentStatus AS paymentStatus, o.PaymentProvider AS paymentProvider, o.TransactionId AS transactionId,
+                          o.PaidAmount AS paidAmount, o.PaidAt AS paidAt
           FROM dbo.Orders o
           INNER JOIN dbo.OrderItems i ON o.OrderId = i.OrderId
           INNER JOIN dbo.ProductOwnership ow ON i.ProductId = ow.ProductId
@@ -904,7 +973,9 @@ exports.getOrders = async (req, res) => {
         .input('email', sql.NVarChar(255), userEmail)
         .query(`
           SELECT OrderId AS orderId, OrderRef AS orderRef, CustomerEmail AS customerEmail, 
-                 Status AS status, TotalAmount AS totalAmount, Currency AS currency, CreatedAt AS createdAt
+                 Status AS status, TotalAmount AS totalAmount, Currency AS currency, CreatedAt AS createdAt,
+                 PaymentStatus AS paymentStatus, PaymentProvider AS paymentProvider, TransactionId AS transactionId,
+                 PaidAmount AS paidAmount, PaidAt AS paidAt
           FROM dbo.Orders
           WHERE CustomerEmail = @email
           ORDER BY OrderId DESC
@@ -912,6 +983,178 @@ exports.getOrders = async (req, res) => {
     }
 
     res.json({ items: result.recordset });
+  } catch (err) {
+    res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+
+// POST /api/orders/:orderRef/payment-evidence
+exports.submitPaymentEvidence = async (req, res) => {
+  const { orderRef } = req.params;
+  const { paymentEvidence, paymentProvider, transactionId, paidAmount } = req.body;
+  const email = req.user?.email || 'customer@test.com';
+
+  if (!paymentProvider || !transactionId || paidAmount === undefined) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'paymentProvider, transactionId, and paidAmount are required' });
+  }
+
+  try {
+    const pool = await poolPromise;
+
+    // Check if order exists and is in PENDING state
+    const orderRes = await pool.request()
+      .input('ref', sql.NVarChar(100), orderRef)
+      .query('SELECT OrderId, Status, CustomerEmail, TotalAmount FROM dbo.Orders WHERE OrderRef = @ref');
+
+    if (orderRes.recordset.length === 0) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Order not found' });
+    }
+
+    const order = orderRes.recordset[0];
+    if (order.Status !== 'PENDING') {
+      return res.status(400).json({ error: 'INVALID_STATE', message: 'Payment evidence can only be submitted for PENDING orders' });
+    }
+
+    // Check if transactionId is already used by another order
+    const txnCheck = await pool.request()
+      .input('txn', sql.VarChar(100), transactionId)
+      .input('ref', sql.NVarChar(100), orderRef)
+      .query('SELECT OrderRef FROM dbo.Orders WHERE TransactionId = @txn AND OrderRef <> @ref');
+
+    if (txnCheck.recordset.length > 0) {
+      return res.status(409).json({ error: 'DUPLICATE_TRANSACTION', message: `Transaction ID is already claimed by order: ${txnCheck.recordset[0].OrderRef}` });
+    }
+
+    // Compute automatic status
+    let computedStatus = 'PAYMENT_SUBMITTED';
+    if (parseFloat(paidAmount) !== parseFloat(order.TotalAmount)) {
+      computedStatus = 'PAYMENT_MISMATCH';
+    } else if (paymentProvider.toLowerCase() === 'manual' || paymentProvider.toLowerCase().startsWith('manual_')) {
+      computedStatus = 'MANUAL_REVIEW_REQUIRED';
+    }
+
+    await pool.request()
+      .input('ref', sql.NVarChar(100), orderRef)
+      .input('evidence', sql.NVarChar(1000), paymentEvidence || null)
+      .input('provider', sql.VarChar(50), paymentProvider)
+      .input('txn', sql.VarChar(100), transactionId)
+      .input('amount', sql.Decimal(18,2), paidAmount)
+      .input('status', sql.VarChar(50), computedStatus)
+      .input('submitter', sql.NVarChar(255), email)
+      .query(`
+        UPDATE dbo.Orders
+        SET PaymentEvidence = @evidence,
+            PaymentProvider = @provider,
+            TransactionId = @txn,
+            PaidAmount = @amount,
+            PaymentStatus = @status,
+            PaymentSubmittedByEmail = @submitter,
+            PaidAt = SYSUTCDATETIME()
+        WHERE OrderRef = @ref
+      `);
+
+    logger.info({
+      event: 'payment.evidence_submitted',
+      orderRef,
+      paymentProvider,
+      transactionId,
+      paidAmount,
+      status: computedStatus
+    });
+
+    res.json({
+      orderRef,
+      paymentStatus: computedStatus,
+      message: 'Payment evidence submitted successfully'
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+
+// GET /api/orders/:orderRef/payment-evidence
+exports.getPaymentEvidence = async (req, res) => {
+  const { orderRef } = req.params;
+
+  try {
+    const pool = await poolPromise;
+    const orderRes = await pool.request()
+      .input('ref', sql.NVarChar(100), orderRef)
+      .query(`
+        SELECT OrderRef AS orderRef, TotalAmount AS orderTotal, Currency AS currency,
+               PaymentEvidence AS paymentEvidence, PaymentProvider AS paymentProvider, 
+               TransactionId AS transactionId, PaidAmount AS paidAmount, PaymentStatus AS paymentStatus,
+               GatewaySignatureStatus AS gatewaySignatureStatus, ManualReviewNote AS manualReviewNote, 
+               PaymentSubmittedByEmail AS paymentSubmittedByEmail, PaymentReviewedByEmail AS paymentReviewedByEmail,
+               PaidAt AS paidAt, PaymentReviewedAt AS paymentReviewedAt
+        FROM dbo.Orders 
+        WHERE OrderRef = @ref
+      `);
+
+    if (orderRes.recordset.length === 0) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Order not found' });
+    }
+
+    res.json(orderRes.recordset[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+
+// POST /api/orders/:orderRef/payment-review
+exports.reviewPaymentEvidence = async (req, res) => {
+  const { orderRef } = req.params;
+  const { paymentStatus, manualReviewNote } = req.body;
+  const email = req.user?.email || 'admin@test.com';
+
+  const validStatuses = ['PAYMENT_VERIFIED', 'PAYMENT_MISMATCH', 'PAYMENT_FAILED', 'MANUAL_REVIEW_REQUIRED'];
+  if (!paymentStatus || !validStatuses.includes(paymentStatus)) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: `paymentStatus is required and must be one of: ${validStatuses.join(', ')}` });
+  }
+
+  if (paymentStatus === 'PAYMENT_VERIFIED' && !manualReviewNote) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'manualReviewNote is required to verify payment manually' });
+  }
+
+  try {
+    const pool = await poolPromise;
+
+    // Check if order exists
+    const orderRes = await pool.request()
+      .input('ref', sql.NVarChar(100), orderRef)
+      .query('SELECT OrderId, Status, TotalAmount FROM dbo.Orders WHERE OrderRef = @ref');
+
+    if (orderRes.recordset.length === 0) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Order not found' });
+    }
+
+    // Update database fields
+    await pool.request()
+      .input('ref', sql.NVarChar(100), orderRef)
+      .input('status', sql.VarChar(50), paymentStatus)
+      .input('note', sql.NVarChar(1000), manualReviewNote || null)
+      .input('reviewer', sql.NVarChar(255), email)
+      .query(`
+        UPDATE dbo.Orders
+        SET PaymentStatus = @status,
+            ManualReviewNote = @note,
+            PaymentReviewedByEmail = @reviewer,
+            PaymentReviewedAt = SYSUTCDATETIME()
+        WHERE OrderRef = @ref
+      `);
+
+    logger.info({
+      event: 'payment.evidence_reviewed',
+      orderRef,
+      paymentStatus,
+      reviewer: email
+    });
+
+    res.json({
+      orderRef,
+      paymentStatus,
+      message: 'Payment evidence reviewed successfully'
+    });
   } catch (err) {
     res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
   }

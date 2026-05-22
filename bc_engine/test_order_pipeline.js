@@ -192,6 +192,7 @@ async function runTests() {
       provider: 'BKASH',
       eventType: 'CAPTURE',
       eventRef: 'BK-TRX-8899',
+      manualReviewNote: 'Manually verified in test suite',
       payload: { amount: 8500.00 }
     }
   });
@@ -227,6 +228,7 @@ async function runTests() {
       provider: 'BKASH',
       eventType: 'CAPTURE',
       eventRef: 'BK-TRX-8899',
+      manualReviewNote: 'Manually verified in test suite',
       payload: { amount: 8500.00 }
     }
   });

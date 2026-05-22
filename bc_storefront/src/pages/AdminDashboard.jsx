@@ -774,8 +774,10 @@ export default function AdminDashboard({ currentUser }) {
                       <thead>
                         <tr>
                           <th>ID</th>
-                          <th>Product Name & SKU</th>
+                          <th>Product Details</th>
+                          <th>Brand & Category</th>
                           <th>QC Status</th>
+                          <th>Pricing Strategy</th>
                           <th>MASTER (Physical)</th>
                           <th>SELL (Virtual)</th>
                           <th>Supplier Owner</th>
@@ -785,14 +787,14 @@ export default function AdminDashboard({ currentUser }) {
                       <tbody>
                         {panelErrors.products ? (
                           <tr>
-                            <td colSpan="7" style={{ padding: '32px', textAlign: 'center', color: '#ea4335' }}>
+                            <td colSpan="9" style={{ padding: '32px', textAlign: 'center', color: '#ea4335' }}>
                               <AlertCircle style={{ display: 'inline', verticalAlign: 'middle', marginRight: '8px' }} size={16} />
                               {panelErrors.products}
                             </td>
                           </tr>
                         ) : products.length === 0 ? (
                           <tr>
-                            <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
+                            <td colSpan="9" style={{ padding: '40px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
                               No products initialized in database yet.
                             </td>
                           </tr>
@@ -801,13 +803,42 @@ export default function AdminDashboard({ currentUser }) {
                             <tr key={p.productId} className="interactive-row">
                               <td style={{ fontWeight: '800', color: 'hsl(var(--text-secondary))' }}>#{p.productId}</td>
                               <td>
-                                <div style={{ fontWeight: '700', color: '#fff', fontSize: '0.925rem' }}>{p.productName}</div>
-                                <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', fontFamily: 'monospace', marginTop: '4px', letterSpacing: '0.02em' }}>{p.sku}</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                  {p.imageUrl ? (
+                                    <img 
+                                      src={p.imageUrl} 
+                                      alt={p.productName} 
+                                      style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.1)' }} 
+                                    />
+                                  ) : (
+                                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: 'hsl(var(--text-muted))', border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
+                                      No Image
+                                    </div>
+                                  )}
+                                  <div>
+                                    <div style={{ fontWeight: '700', color: '#fff', fontSize: '0.925rem' }}>{p.productName}</div>
+                                    <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', fontFamily: 'monospace', marginTop: '4px', letterSpacing: '0.02em', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                      <span>SKU: {p.sku}</span>
+                                      {p.barcode && <span style={{ color: 'hsl(var(--primary))' }}>| Barcode: {p.barcode}</span>}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td>
+                                <div style={{ fontWeight: '600', color: '#fff' }}>{p.brand || 'No Brand'}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', marginTop: '2px' }}>{p.category || 'Uncategorized'}</div>
                               </td>
                               <td>
                                 <span className={`pill-badge ${p.qcStatus === 'APPROVED' ? 'pill-approved' : p.qcStatus === 'SUBMITTED' ? 'pill-submitted' : p.qcStatus === 'REJECTED' ? 'pill-rejected' : 'pill-draft'}`}>
                                   {p.qcStatus}
                                 </span>
+                              </td>
+                              <td>
+                                <div style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                  <div style={{ color: 'hsl(var(--text-secondary))' }}>Base Cost: <strong style={{ color: '#fff' }}>৳{p.basePrice || '0.00'}</strong></div>
+                                  <div style={{ color: 'hsl(var(--text-secondary))' }}>RPU/MRP: <strong style={{ color: '#fbbc05' }}>৳{p.rpuMrp || '0.00'}</strong></div>
+                                  <div style={{ color: 'hsl(var(--text-secondary))' }}>Retail: <strong style={{ color: 'hsl(var(--primary))' }}>৳{p.suggestedRetailPrice || '0.00'}</strong></div>
+                                </div>
                               </td>
                               <td>
                                 <div style={{ fontWeight: '700' }}>{p.masterOnHand} <span style={{ fontSize: '0.75rem', fontWeight: '500', color: 'hsl(var(--text-muted))' }}>on-hand</span></div>

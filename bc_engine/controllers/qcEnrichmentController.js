@@ -496,7 +496,12 @@ exports.getProductDetails = async (req, res) => {
 
     const result = await pool.request()
       .input('id', sql.Int, id)
-      .query('SELECT * FROM dbo.Products WHERE ProductId = @id');
+      .query(`
+        SELECT p.*, pi.ImageUrl AS imageUrl
+        FROM dbo.Products p
+        LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
+        WHERE p.ProductId = @id
+      `);
 
     if (result.recordset.length === 0) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'Product not found' });
@@ -520,7 +525,21 @@ exports.getProductDetails = async (req, res) => {
       qcStatus: product.QCStatus,
       qcReason: product.QCReason,
       lastEnrichedAt: product.LastEnrichedAt,
-      enrichment: enrichment
+      enrichment: enrichment,
+      basePrice: product.BasePrice,
+      supplierNotes: product.SupplierNotes,
+      barcode: product.Barcode,
+      brand: product.Brand,
+      category: product.Category,
+      rpuMrp: product.RPU_MRP,
+      suggestedRetailPrice: product.SuggestedRetailPrice,
+      costNote: product.CostNote,
+      variantsJson: product.VariantsJson,
+      supplierLocation: product.SupplierLocation,
+      deliveryCoverageJson: product.DeliveryCoverageJson,
+      onlineSellingRequested: product.OnlineSellingRequested === 1 || product.OnlineSellingRequested === true,
+      productReadinessStatus: product.ProductReadinessStatus,
+      imageUrl: product.imageUrl || null
     });
   } catch (err) {
     res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
