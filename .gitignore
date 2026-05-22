@@ -1,0 +1,53 @@
+# Node Dependency Directory
+node_modules/
+**/node_modules/
+
+# Production Build Directories
+dist/
+**/dist/
+dist-ssr/
+**/dist-ssr/
+
+# Local Environment Variables and Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+**/.env
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
+
+# Logs and Debug outputs
+*.log
+logs
+**/logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test coverage
+coverage/
+**/coverage/
+
+# OS and Editor specific directories
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary, scratch, or transient files
+scratch/
+**/scratch/
+scratch_*
+*.tmp
+temp/
+**/temp/
