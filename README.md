@@ -65,16 +65,47 @@ We have prepared three double-clickable launchers at the root of the project, wh
 
 ## 🧪 E2E Manual QA Testing Flow
 
-To test the complete workflow end-to-end:
+To test the complete workflow end-to-end, follow this corrected sequence:
 
-1. **Intake Stock**: Go to `/supplier`, create a product, click **`[+] Add Stock`**, and deposit e.g. `100` units of physical `MASTER` stock.
-2. **Approve Product**: Go to `/admin`, select the product in the **QC Queue**, and approve it.
-3. **Transfer Virtual Stock**:
-   * Go back to `/supplier`, request a virtual stock transfer (e.g., `40` units from `MASTER` to `SELL`).
-   * Go to `/admin` under **Transfers**, and click **Approve** on the request.
-4. **Place Order**: Go to `/shop`, add the product to your cart, and click **Checkout**.
-5. **Confirm Order**: In `/admin` under **Recent Orders**, approve the mock payment.
-6. **Verify Balance**: Go to `/supplier` and verify that the virtual ledger (`SELL`) matches the checkout deduction perfectly.
+### 📋 Step-by-Step Operator Flow
+
+1. **Supplier - Create Product**: Go to `/supplier` and click **`Initialize New Product Ledger`** to create a product (starts as `DRAFT`).
+2. **Supplier - Submit for QC**: On the Supplier dashboard, click **`Submit for QC`** on the newly created product.
+3. **Admin - Approve QC**: Go to `/admin` under the **QC Queue** tab, and click **`Approve Design`** to transition the product to `APPROVED`.
+4. **Supplier - Add MASTER Stock**: Go back to `/supplier`, locate the approved product, click **`[+] Add Stock`**, and deposit e.g. `100` units of physical `MASTER` stock.
+5. **Supplier - Request Transfer**: On the Supplier dashboard, click **`Request Transfer`** to initiate a virtual transfer (e.g., `40` units from `MASTER` to `SELL`).
+6. **Admin - Approve Transfer**: Go to `/admin` under the **Stock Transfers** tab, and click **`Approve`** on the transfer request.
+7. **Shop - Buy Product**: Go to `/shop`. The product now appears in the Shop. Add it to your cart, click **`Reserve & Checkout`**, and note the generated `orderRef`.
+8. **Admin - Confirm Payment**: Go to `/admin` under the **Recent Orders** tab, locate the order, and click **`Confirm Payment (Dev)`**.
+9. **Supplier/Admin - Verify Balance**: Go to `/supplier` or `/admin` (under **Inventory Ledgers**) and verify that the virtual ledger (`SELL`) has been reduced by the purchased quantity.
+
+---
+
+### 🗺️ Visual Flow Overview
+
+```text
+Supplier:
+Create product -> Submit for QC
+
+Admin:
+Approve product in QC Queue
+
+Supplier:
+Add MASTER stock -> Request MASTER to SELL transfer
+
+Admin:
+Approve transfer
+
+Shop:
+Buy product -> orderRef appears
+
+Admin:
+Confirm payment
+
+Supplier/Admin:
+Verify SELL stock reduced
+```
+
 
 ---
 
