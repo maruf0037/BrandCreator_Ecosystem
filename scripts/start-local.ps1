@@ -29,7 +29,8 @@ if ($existingProcess) {
 }
 
 # Start backend process in background
-Start-Process -FilePath "node" -ArgumentList "server.js" -WorkingDirectory $engineDir -NoNewWindow -RedirectStandardOutput $logFile -RedirectStandardError $logFile
+$errFile = Join-Path $logDir "server-error.log"
+Start-Process -FilePath "node" -ArgumentList "server.js" -WorkingDirectory $engineDir -NoNewWindow -RedirectStandardOutput $logFile -RedirectStandardError $errFile
 
 # 2. Wait for Backend /health to be responsive
 Write-Host "Waiting for Express server to start..." -ForegroundColor Yellow
