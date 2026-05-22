@@ -84,6 +84,8 @@ Should you need to roll back or inspect prior iterations, the following git comm
 
 | Commit Hash | Action Name & Summary |
 | :--- | :--- |
+| **`248025a`** | **Fix powershell process redirection issue in start script** <br> Adjusts start script processes to support redirection safely on local systems. |
+| **`8b3f7f0`** | **Create comprehensive project README documentation** <br> Introduces the operational developer manual. |
 | **`2632f54`** | **Add Windows desktop shortcut generator script** <br> Generates dynamic `.lnk` Desktop launchers for developer shortcuts. |
 | **`fbd953f`** | **Polish admin and supplier dashboard experience** <br> Overhauls dashboard UI/UX to match dark glassmorphic storefront. |
 | **`b3ad947`** | **Add double-click BrandCreator launcher commands** <br> Creates the double-click `.bat` launcher suite. |
