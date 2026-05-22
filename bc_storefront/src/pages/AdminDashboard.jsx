@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   ShieldAlert, BarChart3, AlertCircle, HelpCircle, Mail, Settings, 
   DollarSign, LogOut, Package, RefreshCw, Layers, Check, X, 
-  ArrowRight, UserPlus, Sliders, AlertTriangle, Play, FileText, Send 
+  ArrowRight, UserPlus, Sliders, AlertTriangle, Play, FileText, Send,
+  MapPin, Target, Megaphone
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -197,6 +198,7 @@ export default function AdminDashboard({ currentUser }) {
   const [orders, setOrders] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [systemHealth, setSystemHealth] = useState(null);
+  const [locationProfiles, setLocationProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [panelErrors, setPanelErrors] = useState({});
@@ -212,6 +214,11 @@ export default function AdminDashboard({ currentUser }) {
   
   const [rejectReasonProductId, setRejectReasonProductId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [selectedAdsProductId, setSelectedAdsProductId] = useState('');
+  const [selectedAdsLocation, setSelectedAdsLocation] = useState('Uttara');
+  const [locationAdsResult, setLocationAdsResult] = useState(null);
+  const [locationAdsHistory, setLocationAdsHistory] = useState([]);
+  const [locationAdsLoading, setLocationAdsLoading] = useState(false);
 
   // Fetch all dashboard data
   const fetchAllData = async () => {
@@ -228,7 +235,8 @@ export default function AdminDashboard({ currentUser }) {
         alertData,
         orderData,
         transactionsData,
-        healthData
+        healthData,
+        locationProfileData
       ] = await Promise.all([
         api.get('/api/products').catch((err) => { pErrs.products = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/api/inventory/transfers').catch((err) => { pErrs.transfers = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
@@ -237,7 +245,8 @@ export default function AdminDashboard({ currentUser }) {
         api.get('/api/alerts/low-stock').catch((err) => { pErrs.alerts = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/api/orders').catch((err) => { pErrs.orders = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/api/inventory/transactions').catch((err) => { pErrs.ledgers = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
-        api.get('/health/deep').catch((err) => { pErrs.systemHealth = err.message || 'Failed to load system health'; return null; })
+        api.get('/health/deep').catch((err) => { pErrs.systemHealth = err.message || 'Failed to load system health'; return null; }),
+        api.get('/api/admin/location-ads/profiles').catch((err) => { pErrs.locationAds = err.message || 'Failed to load location market profiles'; return { items: [] }; })
       ]);
 
       setPanelErrors(pErrs);
@@ -249,6 +258,7 @@ export default function AdminDashboard({ currentUser }) {
       setOrders(orderData.items || []);
       setTransactions(transactionsData.items || []);
       setSystemHealth(healthData || null);
+      setLocationProfiles(locationProfileData.items || []);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Failed to fetch platform dashboard data');
@@ -335,6 +345,52 @@ export default function AdminDashboard({ currentUser }) {
       setError(err.message || 'Failed to retry outbox event');
     }
   };
+
+  const handleLoadLocationHistory = async (productId) => {
+    if (!productId) {
+      setLocationAdsHistory([]);
+      return;
+    }
+
+    try {
+      const data = await api.get(`/api/admin/location-ads/products/${productId}/suggestions`);
+      setLocationAdsHistory(data.items || []);
+    } catch (err) {
+      setLocationAdsHistory([]);
+      setPanelErrors((prev) => ({
+        ...prev,
+        locationAds: err.message || 'Failed to load previous location suggestions'
+      }));
+    }
+  };
+
+  const handleAnalyzeLocationAds = async (e) => {
+    e.preventDefault();
+    if (!selectedAdsProductId || !selectedAdsLocation.trim()) {
+      setError('Select a product and target location before running ads analysis.');
+      return;
+    }
+
+    try {
+      setLocationAdsLoading(true);
+      const data = await api.post('/api/admin/location-ads/analyze', {
+        productId: Number(selectedAdsProductId),
+        testedLocation: selectedAdsLocation.trim()
+      });
+
+      setLocationAdsResult(data.suggestion || null);
+      showToast(`Location ads score generated for ${selectedAdsLocation.trim()}`);
+      const historyData = await api.get(`/api/admin/location-ads/products/${selectedAdsProductId}/suggestions`);
+      setLocationAdsHistory(historyData.items || []);
+    } catch (err) {
+      setError(err.message || 'Failed to analyze location ads opportunity');
+    } finally {
+      setLocationAdsLoading(false);
+    }
+  };
+
+  const selectedAdsProduct = products.find((product) => String(product.productId) === String(selectedAdsProductId));
+  const activeLocationSuggestion = locationAdsResult || locationAdsHistory[0] || null;
 
   return (
     <div>
@@ -446,6 +502,16 @@ export default function AdminDashboard({ currentUser }) {
               >
                 <FileText size={18} />
                 Inventory Ledgers
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => setActiveTab('locationAds')} 
+                className={`sidebar-link w-full text-left ${activeTab === 'locationAds' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <MapPin size={18} />
+                Location Ads
               </button>
             </li>
             <li>
@@ -1331,7 +1397,274 @@ export default function AdminDashboard({ currentUser }) {
                 </div>
               )}
 
-              {/* TAB 7: ORDERS */}
+              {/* TAB 7: LOCATION ADS */}
+              {activeTab === 'locationAds' && (
+                <div>
+                  <div style={{ marginBottom: '28px' }}>
+                    <h2 style={{ fontSize: '1.75rem', marginBottom: '6px' }}>Location-wise Ads Command Center</h2>
+                    <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.925rem', maxWidth: '860px' }}>
+                      Admin-only marketing brain for testing where a supplier product should be promoted first. This does not spend ad money yet; it prepares location fit, audience interest, platform priority, and budget range before real campaign approval.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 0.9fr) minmax(360px, 1.1fr)', gap: '24px', alignItems: 'start' }}>
+                    <form onSubmit={handleAnalyzeLocationAds} className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{
+                          width: '46px', height: '46px', borderRadius: '14px', background: 'rgba(59, 130, 246, 0.12)',
+                          border: '1px solid rgba(59, 130, 246, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: '#3b82f6'
+                        }}>
+                          <Target size={22} />
+                        </div>
+                        <div>
+                          <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Run Location Test</h3>
+                          <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                            Product + location diye quick market fit score.
+                          </p>
+                        </div>
+                      </div>
+
+                      {panelErrors.locationAds && (
+                        <div style={{
+                          padding: '12px 14px', borderRadius: '12px', background: 'rgba(234, 67, 53, 0.08)',
+                          color: '#ea4335', border: '1px solid rgba(234, 67, 53, 0.2)', fontSize: '0.82rem'
+                        }}>
+                          {panelErrors.locationAds}
+                        </div>
+                      )}
+
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Supplier Product
+                        </span>
+                        <select
+                          value={selectedAdsProductId}
+                          onChange={(e) => {
+                            const productId = e.target.value;
+                            setSelectedAdsProductId(productId);
+                            setLocationAdsResult(null);
+                            handleLoadLocationHistory(productId);
+                          }}
+                          className="styled-input"
+                        >
+                          <option value="">Select approved/catalog product</option>
+                          {products.map((product) => (
+                            <option key={product.productId} value={product.productId}>
+                              {product.productName || product.sku} {product.sku ? `(${product.sku})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Test Location
+                        </span>
+                        <select
+                          value={selectedAdsLocation}
+                          onChange={(e) => setSelectedAdsLocation(e.target.value)}
+                          className="styled-input"
+                        >
+                          {locationProfiles.length === 0 && <option value="Uttara">Uttara</option>}
+                          {locationProfiles.map((profile) => (
+                            <option key={profile.profileId} value={profile.locationName}>
+                              {profile.locationName} - {profile.city}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {selectedAdsProduct && (
+                        <div style={{
+                          display: 'grid', gridTemplateColumns: '70px 1fr', gap: '14px', padding: '14px',
+                          background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px'
+                        }}>
+                          <img
+                            src={selectedAdsProduct.imageUrl || 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=200&auto=format&fit=crop'}
+                            alt={selectedAdsProduct.productName}
+                            style={{ width: '70px', height: '70px', borderRadius: '14px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.08)' }}
+                          />
+                          <div>
+                            <div style={{ fontWeight: '900', color: '#fff', marginBottom: '4px' }}>{selectedAdsProduct.productName}</div>
+                            <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.78rem', marginBottom: '8px' }}>
+                              {selectedAdsProduct.brand || 'No brand'} | {selectedAdsProduct.category || 'No category'} | {selectedAdsProduct.sku}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <span className="pill-badge pill-pending">SELL {Math.max(0, Number(selectedAdsProduct.sellOnHand || 0) - Number(selectedAdsProduct.sellReserved || 0))}</span>
+                              <span className="pill-badge pill-draft">MRP BDT {selectedAdsProduct.rpuMrp || selectedAdsProduct.basePrice || 0}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={locationAdsLoading}
+                        className="btn-primary"
+                        style={{ width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '10px', padding: '14px 18px' }}
+                      >
+                        {locationAdsLoading ? <RefreshCw size={16} className="spin-anim" /> : <Megaphone size={16} />}
+                        {locationAdsLoading ? 'Analyzing location...' : 'Sync Location Ads Recommendation'}
+                      </button>
+                    </form>
+
+                    <div className="glass-card-premium">
+                      {!activeLocationSuggestion ? (
+                        <div style={{ textAlign: 'center', padding: '40px 20px', color: 'hsl(var(--text-muted))' }}>
+                          <MapPin size={42} style={{ color: 'hsl(var(--primary))', marginBottom: '14px' }} />
+                          <h3 style={{ color: '#fff', marginBottom: '8px' }}>No recommendation yet</h3>
+                          <p style={{ maxWidth: '480px', margin: '0 auto', lineHeight: 1.6 }}>
+                            Product select kore location sync korlei admin pabe best possible local audience, platform, budget, and risk view.
+                          </p>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '18px', alignItems: 'flex-start' }}>
+                            <div>
+                              <span className={`pill-badge ${activeLocationSuggestion.riskLevel === 'LOW' ? 'pill-approved' : activeLocationSuggestion.riskLevel === 'HIGH' ? 'pill-rejected' : 'pill-submitted'}`}>
+                                Risk {activeLocationSuggestion.riskLevel}
+                              </span>
+                              <h3 style={{ fontSize: '1.35rem', margin: '12px 0 6px' }}>
+                                {activeLocationSuggestion.testedLocation} Market Fit
+                              </h3>
+                              <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem', lineHeight: 1.6, margin: 0 }}>
+                                {activeLocationSuggestion.reasonBangla || activeLocationSuggestion.reasonEnglish}
+                              </p>
+                            </div>
+                            <div style={{ textAlign: 'center', minWidth: '120px' }}>
+                              <div style={{
+                                fontSize: '2.4rem', lineHeight: 1, fontWeight: '950', color: 'hsl(var(--primary))',
+                                textShadow: '0 0 22px hsl(var(--primary) / 0.25)'
+                              }}>
+                                {activeLocationSuggestion.fitScore}
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: 'hsl(var(--text-muted))', textTransform: 'uppercase', fontWeight: 800 }}>
+                                Fit Score
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                            <div style={{ padding: '16px', borderRadius: '14px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Budget Test</div>
+                              <div style={{ color: '#fff', fontWeight: 900, marginTop: '8px' }}>
+                                BDT {activeLocationSuggestion.budgetSuggestion?.suggestedDailyBudgetMin || 0}-{activeLocationSuggestion.budgetSuggestion?.suggestedDailyBudgetMax || 0}/day
+                              </div>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.78rem', marginTop: '4px' }}>
+                                {activeLocationSuggestion.budgetSuggestion?.testDays || 0} days validation
+                              </div>
+                            </div>
+                            <div style={{ padding: '16px', borderRadius: '14px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Expected Orders</div>
+                              <div style={{ color: '#fff', fontWeight: 900, marginTop: '8px' }}>
+                                {activeLocationSuggestion.expectedResult?.expectedOrderRange || 'N/A'}
+                              </div>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.78rem', marginTop: '4px' }}>
+                                Reach {activeLocationSuggestion.expectedResult?.expectedReachRange || 'N/A'}
+                              </div>
+                            </div>
+                            <div style={{ padding: '16px', borderRadius: '14px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Freshness</div>
+                              <div style={{ color: '#34a853', fontWeight: 900, marginTop: '8px' }}>
+                                {activeLocationSuggestion.freshnessStatus || 'LIVE'}
+                              </div>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.78rem', marginTop: '4px' }}>
+                                {activeLocationSuggestion.lastAnalyzedAt ? new Date(activeLocationSuggestion.lastAnalyzedAt).toLocaleString() : 'Just now'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '16px' }}>
+                            <div>
+                              <h4 style={{ fontSize: '0.9rem', marginBottom: '10px' }}>Best Areas</h4>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {(activeLocationSuggestion.suggestedAreas || []).map((area) => (
+                                  <span key={area} className="pill-badge pill-approved">{area}</span>
+                                ))}
+                              </div>
+                            </div>
+                            <div>
+                              <h4 style={{ fontSize: '0.9rem', marginBottom: '10px' }}>Customer Interests</h4>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {(activeLocationSuggestion.interestTags || []).map((interest) => (
+                                  <span key={interest} className="pill-badge pill-pending">{interest}</span>
+                                ))}
+                              </div>
+                            </div>
+                            <div>
+                              <h4 style={{ fontSize: '0.9rem', marginBottom: '10px' }}>Expansion</h4>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {(activeLocationSuggestion.nearbyExpansionAreas || []).map((area) => (
+                                  <span key={area} className="pill-badge pill-draft">{area}</span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="premium-table-container">
+                            <table className="premium-table">
+                              <thead>
+                                <tr>
+                                  <th>Priority</th>
+                                  <th>Platform</th>
+                                  <th>Why</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(activeLocationSuggestion.platformSuggestion || []).map((platform) => (
+                                  <tr key={`${platform.priority}-${platform.platformName}`}>
+                                    <td style={{ fontWeight: '900', color: 'hsl(var(--primary))' }}>#{platform.priority}</td>
+                                    <td style={{ fontWeight: '800', color: '#fff' }}>{platform.platformName}</td>
+                                    <td style={{ color: 'hsl(var(--text-secondary))' }}>{platform.reason}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {locationAdsHistory.length > 0 && (
+                    <div style={{ marginTop: '26px' }} className="premium-table-container">
+                      <table className="premium-table">
+                        <thead>
+                          <tr>
+                            <th>Location</th>
+                            <th>Score</th>
+                            <th>Risk</th>
+                            <th>Budget</th>
+                            <th>Analyzed</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {locationAdsHistory.slice(0, 8).map((item) => (
+                            <tr key={item.suggestionId} className="interactive-row">
+                              <td style={{ fontWeight: '800', color: '#fff' }}>{item.testedLocation}</td>
+                              <td style={{ color: 'hsl(var(--primary))', fontWeight: '900' }}>{item.fitScore}</td>
+                              <td>
+                                <span className={`pill-badge ${item.riskLevel === 'LOW' ? 'pill-approved' : item.riskLevel === 'HIGH' ? 'pill-rejected' : 'pill-submitted'}`}>
+                                  {item.riskLevel}
+                                </span>
+                              </td>
+                              <td>
+                                BDT {item.budgetSuggestion?.suggestedDailyBudgetMin || 0}-{item.budgetSuggestion?.suggestedDailyBudgetMax || 0}/day
+                              </td>
+                              <td style={{ color: 'hsl(var(--text-muted))', fontSize: '0.8rem' }}>
+                                {new Date(item.createdAt || item.lastAnalyzedAt).toLocaleString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 8: ORDERS */}
               {activeTab === 'orders' && (
                 <div>
                   <div style={{ marginBottom: '28px' }}>
@@ -1389,7 +1722,7 @@ export default function AdminDashboard({ currentUser }) {
                 </div>
               )}
 
-              {/* TAB 8: ALERTS */}
+              {/* TAB 9: ALERTS */}
               {activeTab === 'alerts' && (
                 <div>
                   <div style={{ marginBottom: '28px' }}>

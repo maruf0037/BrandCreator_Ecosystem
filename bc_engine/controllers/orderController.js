@@ -3,6 +3,94 @@ const crypto = require('crypto');
 const logger = require('../src/logger');
 const { outboxPendingGauge, webhookVerifyCounter } = require('../src/metrics');
 
+// Helper function to record order item splits in OrderProfitBreakdowns and update profit snapshots
+const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
+  const result = await transaction.request()
+    .input('orderId', sql.BigInt, orderId)
+    .query(`
+      SELECT 
+        oi.ProductId AS productId,
+        oi.Qty AS qty,
+        oi.UnitPrice AS unitPrice,
+        p.BasePrice AS basePrice,
+        p.RPU_MRP AS rpuMrp,
+        ap.AdminSellingPrice AS adminSellingPrice,
+        ap.AdBudgetPlanned AS adBudgetPlanned,
+        ap.PlatformCommission AS platformCommission,
+        ap.DeliveryOpsCost AS deliveryOpsCost,
+        ap.DiscountAmount AS discountAmount
+      FROM dbo.OrderItems oi
+      INNER JOIN dbo.Products p ON oi.ProductId = p.ProductId
+      LEFT JOIN dbo.AdminPricingPlans ap ON oi.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
+      WHERE oi.OrderId = @orderId
+    `);
+
+  for (const row of result.recordset) {
+    const qty = row.qty;
+    const unitPrice = parseFloat(row.unitPrice);
+    const grossRevenue = qty * unitPrice;
+
+    // Supplier Cost per unit: prioritizing RPU_MRP then BasePrice
+    const supplierCostPerUnit = row.rpuMrp !== null && parseFloat(row.rpuMrp) > 0 
+      ? parseFloat(row.rpuMrp) 
+      : (row.basePrice !== null ? parseFloat(row.basePrice) : 0.00);
+
+    const supplierPayable = qty * supplierCostPerUnit;
+
+    // Pricing plan variables (fallback to 0 if no plan)
+    const adPlannedUnit = row.adBudgetPlanned !== null ? parseFloat(row.adBudgetPlanned) : 0.00;
+    const commUnit = row.platformCommission !== null ? parseFloat(row.platformCommission) : 0.00;
+    const deliveryUnit = row.deliveryOpsCost !== null ? parseFloat(row.deliveryOpsCost) : 0.00;
+    const discountUnit = row.discountAmount !== null ? parseFloat(row.discountAmount) : 0.00;
+
+    // Calculate payouts
+    const adSpendShare = qty * adPlannedUnit;
+    const platformCommission = qty * commUnit;
+    const deliveryOpsCost = qty * deliveryUnit;
+    const discountAmount = qty * discountUnit;
+
+    // Net BrandCreator profit formula: GrossRevenue minus supplier cost, planned marketing, logistics, and discounts
+    const netBrandCreatorProfit = grossRevenue - supplierPayable - adSpendShare - deliveryOpsCost - discountAmount;
+
+    // Insert into dbo.OrderProfitBreakdowns
+    await transaction.request()
+      .input('orderId', sql.BigInt, orderId)
+      .input('productId', sql.Int, row.productId)
+      .input('qty', sql.Int, qty)
+      .input('grossRevenue', sql.Decimal(18, 2), grossRevenue)
+      .input('supplierPayable', sql.Decimal(18, 2), supplierPayable)
+      .input('platformCommission', sql.Decimal(18, 2), platformCommission)
+      .input('adSpendShare', sql.Decimal(18, 2), adSpendShare)
+      .input('deliveryOpsCost', sql.Decimal(18, 2), deliveryOpsCost)
+      .input('discountAmount', sql.Decimal(18, 2), discountAmount)
+      .input('netProfit', sql.Decimal(18, 2), netBrandCreatorProfit)
+      .input('profitAfterReturn', sql.Decimal(18, 2), netBrandCreatorProfit)
+      .query(`
+        INSERT INTO dbo.OrderProfitBreakdowns (
+          OrderId, ProductId, Qty, GrossRevenue, SupplierPayable, PlatformCommission,
+          AdSpendShare, DeliveryOpsCost, DiscountAmount, NetBrandCreatorProfit, ReturnLoss, 
+          ProfitAfterReturn, PaymentStatus
+        )
+        VALUES (
+          @orderId, @productId, @qty, @grossRevenue, @supplierPayable, @platformCommission,
+          @adSpendShare, @deliveryOpsCost, @discountAmount, @netProfit, 0.00, 
+          @profitAfterReturn, 'PAID'
+        )
+      `);
+      
+    // Update live AdSpendActual on the snapshot: increment actual spend by simulated share
+    await transaction.request()
+      .input('productId', sql.Int, row.productId)
+      .input('adSpendShare', sql.Decimal(18, 2), adSpendShare)
+      .query(`
+        UPDATE dbo.ProductProfitSnapshots
+        SET AdSpendActual = AdSpendActual + @adSpendShare,
+            UpdatedAt = SYSUTCDATETIME()
+        WHERE ProductId = @productId
+      `);
+  }
+};
+
 // POST /api/orders
 exports.createOrder = async (req, res) => {
   const { orderRef, items, currency } = req.body;
@@ -270,6 +358,9 @@ exports.confirmOrder = async (req, res) => {
       await transaction.request()
         .input('ref', sql.NVarChar(100), orderRef)
         .query("UPDATE dbo.Orders SET Status = 'CONFIRMED', UpdatedAt = SYSUTCDATETIME() WHERE OrderRef = @ref");
+
+      // 4b. Realize financial splits in the ledger
+      await recordOrderProfitBreakdown(transaction, order.OrderId, orderRef);
 
       // 5. Update Idempotency Table Processed bit
       await transaction.request()
@@ -668,7 +759,7 @@ exports.paymentWebhook = async (req, res) => {
               .execute('dbo.sp_InventoryApplyTransaction');
           }
 
-          // Update Status and Payment Details
+           // Update Status and Payment Details
           await transaction.request()
             .input('ref', sql.NVarChar(100), orderRef)
             .input('provider', sql.VarChar(50), upperProvider)
@@ -686,6 +777,9 @@ exports.paymentWebhook = async (req, res) => {
                   UpdatedAt = SYSUTCDATETIME() 
               WHERE OrderRef = @ref
             `);
+
+          // Realize financial splits in the ledger via webhook
+          await recordOrderProfitBreakdown(transaction, order.OrderId, orderRef);
 
           // Outbox
           await transaction.request()

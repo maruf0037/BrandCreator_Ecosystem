@@ -512,6 +512,11 @@ exports.getProducts = async (req, res) => {
                  pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
                  COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved,
+                 ap.AdminSellingPrice AS adminSellingPrice,
+                 ap.AdBudgetPlanned AS adBudgetPlanned,
+                 ap.PlatformCommission AS platformCommission,
+                 ap.DeliveryOpsCost AS deliveryOpsCost,
+                 ap.DiscountAmount AS discountAmount,
                  (
                    SELECT STRING_AGG(o.SupplierEmail, ', ') 
                    FROM dbo.ProductOwnership o 
@@ -521,6 +526,7 @@ exports.getProducts = async (req, res) => {
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
           LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
+          LEFT JOIN dbo.AdminPricingPlans ap ON p.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
           ORDER BY p.ProductId DESC
         `);
  
@@ -580,21 +586,23 @@ exports.getProducts = async (req, res) => {
       return res.json({ items });
     } 
     else {
-      // Customer view
+      // Customer view (prioritize adminSellingPrice once configured)
       const result = await pool.request()
         .query(`
           SELECT p.ProductId AS productId, p.SKU AS sku, p.ProductName AS productName, 
                  p.Status AS status, p.QCStatus AS qcStatus, p.QCReason AS qcReason,
                  p.EnrichmentJson AS enrichmentJson, p.LastEnrichedAt AS lastEnrichedAt,
-                 p.BasePrice AS basePrice, p.SupplierNotes AS supplierNotes,
+                 COALESCE(ap.AdminSellingPrice, p.BasePrice) AS basePrice, p.SupplierNotes AS supplierNotes,
                  p.Barcode AS barcode, p.Brand AS brand, p.Category AS category,
                  p.RPU_MRP AS rpuMrp, p.SuggestedRetailPrice AS suggestedRetailPrice,
                  p.VariantsJson AS variantsJson, p.SupplierLocation AS supplierLocation,
                  pi.ImageUrl AS imageUrl,
-                 COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved
+                 COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved,
+                 ap.AdminSellingPrice AS adminSellingPrice
           FROM dbo.Products p
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
+          LEFT JOIN dbo.AdminPricingPlans ap ON p.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
           WHERE p.Status = 'ACTIVE' AND p.QCStatus = 'APPROVED'
           ORDER BY p.ProductId DESC
         `);
