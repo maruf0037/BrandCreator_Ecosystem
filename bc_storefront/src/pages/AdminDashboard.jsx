@@ -202,6 +202,13 @@ export default function AdminDashboard({ currentUser }) {
   const [pricingProducts, setPricingProducts] = useState([]);
   const [profitLedgerSummary, setProfitLedgerSummary] = useState(null);
   const [profitLedgerItems, setProfitLedgerItems] = useState([]);
+  const [walletSummary, setWalletSummary] = useState(null);
+  const [topUpForm, setTopUpForm] = useState({
+    txnType: 'ADMIN_TOP_UP',
+    amount: '',
+    notes: ''
+  });
+  const [topUpLoading, setTopUpLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [panelErrors, setPanelErrors] = useState({});
@@ -356,7 +363,8 @@ export default function AdminDashboard({ currentUser }) {
         locationProfileData,
         pricingProductData,
         profitLedgerData,
-        campaignData
+        campaignData,
+        walletData
       ] = await Promise.all([
         api.get('/api/products').catch((err) => { pErrs.products = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/api/inventory/transfers').catch((err) => { pErrs.transfers = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
@@ -369,7 +377,8 @@ export default function AdminDashboard({ currentUser }) {
         api.get('/api/admin/location-ads/profiles').catch((err) => { pErrs.locationAds = err.message || 'Failed to load location market profiles'; return { items: [] }; }),
         api.get('/api/admin/pricing/products').catch((err) => { pErrs.pricing = err.message || 'Failed to load admin pricing products'; return { items: [] }; }),
         api.get('/api/admin/profit-ledger').catch((err) => { pErrs.profitLedger = err.message || 'Failed to load profit ledger'; return { items: [], summary: null }; }),
-        api.get('/api/admin/campaigns').catch((err) => { pErrs.campaigns = err.message || 'Failed to load campaigns'; return { items: [] }; })
+        api.get('/api/admin/campaigns').catch((err) => { pErrs.campaigns = err.message || 'Failed to load campaigns'; return { items: [] }; }),
+        api.get('/api/admin/wallet/summary').catch((err) => { pErrs.wallet = err.message || 'Failed to load wallet'; return null; })
       ]);
 
       setPanelErrors(pErrs);
@@ -386,6 +395,7 @@ export default function AdminDashboard({ currentUser }) {
       setProfitLedgerSummary(profitLedgerData.summary || null);
       setProfitLedgerItems(profitLedgerData.items || []);
       setCampaigns(campaignData.items || []);
+      setWalletSummary(walletData || null);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Failed to fetch platform dashboard data');
@@ -470,6 +480,36 @@ export default function AdminDashboard({ currentUser }) {
       fetchAllData();
     } catch (err) {
       setError(err.message || 'Failed to retry outbox event');
+    }
+  };
+
+  const handleTopUpSubmit = async (e) => {
+    e.preventDefault();
+    if (!topUpForm.amount || parseFloat(topUpForm.amount) <= 0) return;
+    try {
+      setTopUpLoading(true);
+      await api.post('/api/admin/wallet/topup', {
+        txnType: topUpForm.txnType,
+        amount: parseFloat(topUpForm.amount),
+        notes: topUpForm.notes
+      });
+      showToast(`Wallet topped up successfully with BDT ${topUpForm.amount}!`);
+      setTopUpForm({ txnType: 'ADMIN_TOP_UP', amount: '', notes: '' });
+      fetchAllData();
+    } catch (err) {
+      setError(err.message || 'Failed to process topup');
+    } finally {
+      setTopUpLoading(false);
+    }
+  };
+
+  const handleReleaseMaturedProfit = async () => {
+    try {
+      const res = await api.post('/api/admin/wallet/release-matured-profit');
+      showToast(res.message || 'Matured profits released successfully!');
+      fetchAllData();
+    } catch (err) {
+      setError(err.message || 'Failed to release matured profits');
     }
   };
 
@@ -1759,6 +1799,68 @@ export default function AdminDashboard({ currentUser }) {
                     </p>
                   </div>
 
+                  {/* Phase 6: Ads Wallet & Profit Locking Dashboard Panel */}
+                  <div style={{
+                    background: 'rgba(234, 67, 53, 0.04)',
+                    border: '1px solid rgba(234, 67, 53, 0.2)',
+                    borderRadius: '16px',
+                    padding: '16px 20px',
+                    marginBottom: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    color: '#ea4335'
+                  }}>
+                    <AlertTriangle size={20} />
+                    <span style={{ fontSize: '0.9rem', fontWeight: '700' }}>
+                      Profit inside return window is not spendable. Only stable profit is usable for ads.
+                    </span>
+                  </div>
+
+                  <div style={{ marginBottom: '32px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <DollarSign size={18} style={{ color: 'hsl(var(--primary))' }} />
+                        Ecosystem Wallet & Funding Telemetry
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={handleReleaseMaturedProfit}
+                        className="btn-secondary"
+                        style={{ padding: '6px 14px', fontSize: '0.78rem', borderColor: 'rgba(255,255,255,0.1)', color: '#fff' }}
+                      >
+                        Release Matured Profits
+                      </button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+                      {[
+                        ['Supplier Locked', walletSummary?.supplierPayableLocked || 0, 'Protected supplier liability wallet'],
+                        ['Pending Profit', walletSummary?.pendingProfit || 0, 'Projected profit in return window'],
+                        ['Stable Profit', walletSummary?.stableProfit || 0, 'Matured spendable profit'],
+                        ['Return Window Risk', walletSummary?.returnWindowRisk || 0, 'Active return window exposure'],
+                        ['Admin Top-up', walletSummary?.adminTopUp || 0, 'Admin manual balance top-ups'],
+                        ['Supplier Deposit', walletSummary?.supplierCampaignDeposit || 0, 'Deposits for specific campaigns'],
+                        ['Ads Spend Available', walletSummary?.adsSpendAvailable || 0, 'Total spendable campaign budget', true]
+                      ].map(([label, value, desc, highlight]) => (
+                        <div key={label} className="glass-card-premium" style={{ 
+                          padding: '20px',
+                          borderLeft: highlight ? '4px solid #34a853' : '1px solid rgba(255,255,255,0.05)',
+                          background: highlight ? 'rgba(52, 168, 83, 0.05)' : 'rgba(13, 17, 24, 0.65)'
+                        }}>
+                          <div style={{ color: highlight ? '#34a853' : 'hsl(var(--text-muted))', fontSize: '0.74rem', fontWeight: '850', textTransform: 'uppercase' }}>
+                            {label}
+                          </div>
+                          <div style={{ color: highlight ? '#34a853' : '#fff', fontWeight: '950', fontSize: '1.5rem', marginTop: '6px', marginBottom: '4px' }}>
+                            BDT {Number(value || 0).toFixed(2)}
+                          </div>
+                          <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.72rem', fontStyle: 'italic' }}>
+                            {desc}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   {panelErrors.pricing && (
                     <div style={{
                       marginBottom: '18px', padding: '14px 16px', borderRadius: '14px',
@@ -1978,6 +2080,60 @@ export default function AdminDashboard({ currentUser }) {
                           </div>
                         )}
                       </div>
+
+                      {/* Topup wallet form */}
+                      <div className="glass-card-premium" style={{ marginTop: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                          <DollarSign size={20} style={{ color: 'hsl(var(--primary))' }} />
+                          <h3 style={{ margin: 0, fontSize: '1.18rem' }}>Admin / Supplier Wallet Top-up</h3>
+                        </div>
+                        <form onSubmit={handleTopUpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <span style={{ fontSize: '0.74rem', fontWeight: '850', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase' }}>Transaction Type</span>
+                            <select
+                              value={topUpForm.txnType}
+                              onChange={(e) => setTopUpForm(prev => ({ ...prev, txnType: e.target.value }))}
+                              className="styled-input"
+                            >
+                              <option value="ADMIN_TOP_UP">Admin Top-up (ADMIN_TOP_UP)</option>
+                              <option value="SUPPLIER_CAMPAIGN_DEPOSIT">Supplier Deposit (SUPPLIER_CAMPAIGN_DEPOSIT)</option>
+                            </select>
+                          </label>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <span style={{ fontSize: '0.74rem', fontWeight: '850', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase' }}>Amount (BDT)</span>
+                            <input
+                              type="number"
+                              required
+                              min="1"
+                              step="0.01"
+                              placeholder="0.00"
+                              value={topUpForm.amount}
+                              onChange={(e) => setTopUpForm(prev => ({ ...prev, amount: e.target.value }))}
+                              className="styled-input"
+                            />
+                          </label>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <span style={{ fontSize: '0.74rem', fontWeight: '850', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase' }}>Notes</span>
+                            <input
+                              type="text"
+                              placeholder="Top-up reason, transaction reference..."
+                              value={topUpForm.notes}
+                              onChange={(e) => setTopUpForm(prev => ({ ...prev, notes: e.target.value }))}
+                              className="styled-input"
+                            />
+                          </label>
+                          <button
+                            type="submit"
+                            disabled={topUpLoading}
+                            className="btn-primary"
+                            style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '12px' }}
+                          >
+                            {topUpLoading ? <RefreshCw size={15} className="spin-anim" /> : <DollarSign size={15} />}
+                            {topUpLoading ? 'Processing...' : 'Deposit Funding'}
+                          </button>
+                        </form>
+                      </div>
+
                     </div>
                   </div>
 
@@ -2494,6 +2650,19 @@ export default function AdminDashboard({ currentUser }) {
                               </span>
                             )}
                           </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))' }}>5. Spendable Ads Wallet Balance</span>
+                            {(walletSummary?.adsSpendAvailable || 0) >= (Number(campaignForm.dailyBudgetBDT || 0) * 2) ? (
+                              <span style={{ color: '#34a853', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={14} /> BDT {(walletSummary?.adsSpendAvailable || 0).toFixed(0)} available (&ge; ৳{Number(campaignForm.dailyBudgetBDT || 0) * 2})
+                              </span>
+                            ) : (
+                              <span style={{ color: '#ea4335', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <X size={14} /> Insufficient (৳{(walletSummary?.adsSpendAvailable || 0).toFixed(0)} / ৳{Number(campaignForm.dailyBudgetBDT || 0) * 2})
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Submit Button */}
@@ -2506,7 +2675,8 @@ export default function AdminDashboard({ currentUser }) {
                             !(selectedPricingProduct && selectedPricingProduct.planStatus === 'ACTIVE') ||
                             !activeLocationSuggestion ||
                             !(sellAvailableForCommand > 0) ||
-                            !(projectedMarginPercent >= 15)
+                            !(projectedMarginPercent >= 15) ||
+                            !((walletSummary?.adsSpendAvailable || 0) >= (Number(campaignForm.dailyBudgetBDT || 0) * 2))
                           }
                           className="btn-primary"
                           style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '14px 18px', background: 'linear-gradient(135deg, #34a853, #1b7a32)', color: '#fff', border: 'none' }}

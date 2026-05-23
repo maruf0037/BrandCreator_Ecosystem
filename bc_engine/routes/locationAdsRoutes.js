@@ -28,6 +28,10 @@ const requireRole = (allowedRoles) => {
 };
 
 router.post('/admin/location-ads/analyze', requireRole(['SuperAdmin', 'Admin']), locationAdsController.analyzeLocationAds);
+router.post('/admin/location-ads/sync', requireRole(['SuperAdmin', 'Admin']), (req, res, next) => {
+  req.body.testedLocation = req.body.testedLocation || req.body.locationName;
+  return locationAdsController.analyzeLocationAds(req, res, next);
+});
 router.get('/admin/location-ads/products/:productId/suggestions', requireRole(['SuperAdmin', 'Admin']), locationAdsController.getProductSuggestions);
 router.get('/admin/location-ads/profiles', requireRole(['SuperAdmin', 'Admin']), locationAdsController.getLocationProfiles);
 

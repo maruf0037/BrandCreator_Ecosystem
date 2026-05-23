@@ -164,22 +164,33 @@ exports.approveTestCampaign = async (req, res) => {
       }
     }
 
+    // ── Guard 5: Spendable Ads Wallet Balance Check ────────────────────────
+    const walletService = require('../services/walletService');
+    const walletBalances = await walletService.calculateWalletBalances(pool);
+    const dailyBudget = Number(dailyBudgetBDT || 0);
+    const testDays = 2;
+    const totalBudget = dailyBudget * testDays;
+
+    if (totalBudget > walletBalances.adsSpendAvailable) {
+      blockingReasons.push({
+        code: 'PENDING_PROFIT_BLOCKED',
+        message: 'BLOCKED: Profit is still inside return window. Wait until return date passes.'
+      });
+    }
+
     // ── If any guard blocked → return 400 ───────────────────────────────────
     if (blockingReasons.length > 0) {
       return res.status(400).json({
         error: 'APPROVAL_BLOCKED',
         message: 'Campaign cannot be approved. Fix the following issues first.',
         blockingReasons,
-        guardChecksPassed: 4 - blockingReasons.length,
-        guardChecksTotal: 4
+        guardChecksPassed: 5 - blockingReasons.length,
+        guardChecksTotal: 5
       });
     }
 
     // ── All guards passed — insert campaign ──────────────────────────────────
     const adminEmail = req.user?.email || 'admin@system';
-    const dailyBudget = Number(dailyBudgetBDT || 0);
-    const testDays = 2;
-    const totalBudget = dailyBudget * testDays;
 
     const insertRes = await pool.request()
       .input('productId', sql.Int, productId)
