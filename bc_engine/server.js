@@ -10,6 +10,7 @@ const orderRoutes = require('./routes/orderRoutes');
 const securityAlertRoutes = require('./routes/securityAlertRoutes');
 const pricingRoutes = require('./routes/pricingRoutes');
 const locationAdsRoutes = require('./routes/locationAdsRoutes');
+const campaignRoutes = require('./routes/campaignRoutes');
 const healthRoutes = require('./src/routes/healthRoutes');
 
 // Observability Additions
@@ -86,6 +87,7 @@ app.use('/api', orderRoutes);
 app.use('/api', securityAlertRoutes);
 app.use('/api', pricingRoutes);
 app.use('/api', locationAdsRoutes);
+app.use('/api', campaignRoutes);
 app.use('/', healthRoutes); // GET /health/deep
 
 // Global http error tracking middleware

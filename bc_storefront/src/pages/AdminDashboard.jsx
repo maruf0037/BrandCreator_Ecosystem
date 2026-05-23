@@ -241,6 +241,20 @@ export default function AdminDashboard({ currentUser }) {
     minimumProfitMargin: 15
   });
 
+  // Campaign & Multi-location state variables
+  const [campaigns, setCampaigns] = useState([]);
+  const [multiLocationResults, setMultiLocationResults] = useState([]);
+  const [multiLocationLoading, setMultiLocationLoading] = useState(false);
+  const [campaignApproving, setCampaignApproving] = useState(false);
+  const [campaignForm, setCampaignForm] = useState({
+    selectedLocation: '',
+    platform: 'Facebook',
+    dailyBudgetBDT: '',
+    expectedOrderRange: '1-5',
+    suggestionId: null,
+    notes: ''
+  });
+
   // Fetch all dashboard data
   const fetchAllData = async () => {
     setLoading(true);
@@ -259,7 +273,8 @@ export default function AdminDashboard({ currentUser }) {
         healthData,
         locationProfileData,
         pricingProductData,
-        profitLedgerData
+        profitLedgerData,
+        campaignData
       ] = await Promise.all([
         api.get('/api/products').catch((err) => { pErrs.products = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/api/inventory/transfers').catch((err) => { pErrs.transfers = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
@@ -271,7 +286,8 @@ export default function AdminDashboard({ currentUser }) {
         api.get('/health/deep').catch((err) => { pErrs.systemHealth = err.message || 'Failed to load system health'; return null; }),
         api.get('/api/admin/location-ads/profiles').catch((err) => { pErrs.locationAds = err.message || 'Failed to load location market profiles'; return { items: [] }; }),
         api.get('/api/admin/pricing/products').catch((err) => { pErrs.pricing = err.message || 'Failed to load admin pricing products'; return { items: [] }; }),
-        api.get('/api/admin/profit-ledger').catch((err) => { pErrs.profitLedger = err.message || 'Failed to load profit ledger'; return { items: [], summary: null }; })
+        api.get('/api/admin/profit-ledger').catch((err) => { pErrs.profitLedger = err.message || 'Failed to load profit ledger'; return { items: [], summary: null }; }),
+        api.get('/api/admin/campaigns').catch((err) => { pErrs.campaigns = err.message || 'Failed to load campaigns'; return { items: [] }; })
       ]);
 
       setPanelErrors(pErrs);
@@ -287,6 +303,7 @@ export default function AdminDashboard({ currentUser }) {
       setPricingProducts(pricingProductData.items || []);
       setProfitLedgerSummary(profitLedgerData.summary || null);
       setProfitLedgerItems(profitLedgerData.items || []);
+      setCampaigns(campaignData.items || []);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Failed to fetch platform dashboard data');
@@ -525,6 +542,104 @@ export default function AdminDashboard({ currentUser }) {
       deliveryOpsCost: String(autoRecommendResult.deliveryOpsCost)
     }));
     showToast('Auto recommendation applied to pricing form. Review and Save Plan manually.');
+  };
+
+  const handleCompareLocations = async () => {
+    if (!selectedAdsProductId) {
+      setError('Select a product first to compare location fitness.');
+      return;
+    }
+    try {
+      setMultiLocationLoading(true);
+      setMultiLocationResults([]);
+      const locations = ['Uttara', 'Mirpur', 'Dhanmondi', 'Gulshan', 'Banani'];
+      const promises = locations.map((loc) =>
+        api.post('/api/admin/location-ads/analyze', {
+          productId: Number(selectedAdsProductId),
+          testedLocation: loc
+        })
+        .then((res) => res.suggestion)
+        .catch((err) => ({
+          testedLocation: loc,
+          error: err.message || 'Analysis failed'
+        }))
+      );
+      const results = await Promise.all(promises);
+      setMultiLocationResults(results);
+      showToast('Multi-location fitness comparison complete!');
+    } catch (err) {
+      setError(err.message || 'Failed to compare location ads opportunities');
+    } finally {
+      setMultiLocationLoading(false);
+    }
+  };
+
+  const handleSelectLocationForCampaign = (sug) => {
+    if (sug.error) return;
+    setCampaignForm({
+      selectedLocation: sug.testedLocation,
+      platform: sug.platformSuggestion?.[0]?.platformName || 'Facebook',
+      dailyBudgetBDT: String(sug.budgetSuggestion?.suggestedDailyBudgetMin || 500),
+      expectedOrderRange: sug.expectedResult?.expectedOrderRange || '1-5',
+      suggestionId: sug.suggestionId,
+      notes: ''
+    });
+    // Sync the activeLocationSuggestion state so guard/profit calculations are instantly in sync
+    setLocationAdsResult(sug);
+    showToast(`Ecosystem location ${sug.testedLocation} selected for campaign approval workflow.`);
+  };
+
+  const handleApproveCampaign = async (e) => {
+    e.preventDefault();
+    if (!selectedAdsProductId) {
+      setError('Select a product first.');
+      return;
+    }
+    if (!campaignForm.selectedLocation || !campaignForm.platform || !campaignForm.dailyBudgetBDT) {
+      setError('Location, platform, and daily budget are required.');
+      return;
+    }
+
+    try {
+      setCampaignApproving(true);
+      const payload = {
+        productId: Number(selectedAdsProductId),
+        selectedLocation: campaignForm.selectedLocation,
+        platform: campaignForm.platform,
+        dailyBudgetBDT: Number(campaignForm.dailyBudgetBDT),
+        expectedOrderRange: campaignForm.expectedOrderRange,
+        suggestionId: campaignForm.suggestionId,
+        fitScore: activeLocationSuggestion?.fitScore || 0,
+        riskLevel: activeLocationSuggestion?.riskLevel || 'MEDIUM',
+        notes: campaignForm.notes
+      };
+
+      const res = await api.post('/api/admin/campaigns/approve-test', payload);
+      showToast(res.message || 'Campaign approved for test successfully! ✅');
+      setCampaignForm({
+        selectedLocation: '',
+        platform: 'Facebook',
+        dailyBudgetBDT: '',
+        expectedOrderRange: '1-5',
+        suggestionId: null,
+        notes: ''
+      });
+      await fetchAllData();
+    } catch (err) {
+      setError(err.message || 'Failed to approve test campaign');
+    } finally {
+      setCampaignApproving(false);
+    }
+  };
+
+  const handleUpdateCampaignStatus = async (campaignId, status) => {
+    try {
+      const res = await api.post(`/api/admin/campaigns/${campaignId}/status`, { status });
+      showToast(res.message || `Campaign status updated to ${status}`);
+      await fetchAllData();
+    } catch (err) {
+      setError(err.message || 'Failed to update campaign status');
+    }
   };
 
   return (
@@ -2026,7 +2141,6 @@ export default function AdminDashboard({ currentUser }) {
                                {autoRecommendResult.breakdownNote}
                              </div>
 
-                             {/* Apply to Form Button */}
                              <button
                                type="button"
                                onClick={handleApplyAutoRecommend}
@@ -2041,6 +2155,379 @@ export default function AdminDashboard({ currentUser }) {
                        </div>
                      </div>
                    </div>
+
+                    {/* PANEL A: MULTI-LOCATION COMPARISON */}
+                    <div style={{ marginTop: '36px' }}>
+                      <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{
+                            width: '40px', height: '40px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.12)',
+                            border: '1px solid rgba(59, 130, 246, 0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6'
+                          }}>
+                            <MapPin size={20} />
+                          </div>
+                          <div>
+                            <h3 style={{ margin: 0, fontSize: '1.12rem' }}>Multi-Location Ads Opportunity Comparison</h3>
+                            <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                              Compare market fitness and expected results across Uttara, Mirpur, Dhanmondi, Gulshan, and Banani in parallel.
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleCompareLocations}
+                          disabled={multiLocationLoading || !selectedAdsProductId}
+                          className="btn-primary"
+                          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 18px' }}
+                        >
+                          {multiLocationLoading ? <RefreshCw size={15} className="spin-anim" /> : <Layers size={15} />}
+                          Compare 5 locations
+                        </button>
+                      </div>
+
+                      {multiLocationResults.length > 0 && (
+                        <div className="premium-table-container tab-animation" style={{ marginBottom: '32px' }}>
+                          <table className="premium-table">
+                            <thead>
+                              <tr>
+                                <th>Location</th>
+                                <th>Fit Score</th>
+                                <th>Risk Level</th>
+                                <th>Suggested Daily Budget</th>
+                                <th>Expected Orders</th>
+                                <th>Top Platform Recommendation</th>
+                                <th style={{ textAlign: 'right' }}>Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {multiLocationResults.map((sug) => {
+                                if (sug.error) {
+                                  return (
+                                    <tr key={sug.testedLocation}>
+                                      <td style={{ fontWeight: '800', color: '#fff' }}>{sug.testedLocation}</td>
+                                      <td colSpan="6" style={{ color: '#ea4335', fontStyle: 'italic', fontSize: '0.85rem' }}>
+                                        Error sync: {sug.error}
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+                                return (
+                                  <tr key={sug.testedLocation} className="interactive-row">
+                                    <td style={{ fontWeight: '800', color: '#fff' }}>{sug.testedLocation}</td>
+                                    <td>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{
+                                          fontSize: '1.1rem', fontWeight: '950',
+                                          color: sug.fitScore >= 75 ? '#34a853' : sug.fitScore >= 55 ? '#fbbc05' : '#ea4335'
+                                        }}>
+                                          {sug.fitScore}
+                                        </span>
+                                        <span style={{ fontSize: '0.72rem', color: 'hsl(var(--text-muted))' }}>/ 100</span>
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <span className={`pill-badge ${
+                                        sug.riskLevel === 'LOW' ? 'pill-approved' :
+                                        sug.riskLevel === 'MEDIUM' ? 'pill-submitted' :
+                                        'pill-rejected'
+                                      }`}>
+                                        {sug.riskLevel}
+                                      </span>
+                                    </td>
+                                    <td style={{ fontWeight: '750' }}>
+                                      BDT {sug.budgetSuggestion?.suggestedDailyBudgetMin || 0} - {sug.budgetSuggestion?.suggestedDailyBudgetMax || 0}
+                                    </td>
+                                    <td style={{ fontWeight: '750', color: 'hsl(var(--primary))' }}>
+                                      {sug.expectedResult?.expectedOrderRange || '0'}
+                                    </td>
+                                    <td>
+                                      <div style={{ display: 'flex', gap: '6px' }}>
+                                        {(sug.platformSuggestion || []).slice(0, 2).map((p) => (
+                                          <span key={p.platformName} className="pill-badge pill-draft">
+                                            {p.platformName}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSelectLocationForCampaign(sug)}
+                                        className="btn-secondary"
+                                        style={{ padding: '6px 12px', fontSize: '0.78rem', borderColor: 'rgba(59,130,246,0.3)', color: 'hsl(var(--primary))' }}
+                                      >
+                                        Select Target
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* PANEL B: CAMPAIGN APPROVAL WORKFLOW */}
+                    <div style={{ marginTop: '36px', display: 'grid', gridTemplateColumns: 'minmax(320px, 0.95fr) minmax(400px, 1.05fr)', gap: '24px', alignItems: 'start' }}>
+                      {/* Approval Form */}
+                      <form onSubmit={handleApproveCampaign} className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+                          <div style={{
+                            width: '40px', height: '40px', borderRadius: '12px', background: 'rgba(52, 168, 83, 0.12)',
+                            border: '1px solid rgba(52, 168, 83, 0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34a853'
+                          }}>
+                            <Check size={20} />
+                          </div>
+                          <div>
+                            <h3 style={{ margin: 0, fontSize: '1.12rem' }}>Ecosystem Campaign Approval</h3>
+                            <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                              Approve draft campaign for testing. Auto-assigns APPROVED_FOR_TEST status if guards pass.
+                            </p>
+                          </div>
+                        </div>
+
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <span style={{ fontSize: '0.74rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Target Location</span>
+                          <input
+                            type="text"
+                            required
+                            readOnly
+                            placeholder="Select a location from comparison table above"
+                            value={campaignForm.selectedLocation}
+                            className="styled-input"
+                            style={{ background: 'rgba(255, 255, 255, 0.02)', color: 'hsl(var(--text-muted))', cursor: 'not-allowed' }}
+                          />
+                        </label>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Target Platform</span>
+                            <select
+                              value={campaignForm.platform}
+                              onChange={(e) => setCampaignForm((prev) => ({ ...prev, platform: e.target.value }))}
+                              className="styled-input"
+                            >
+                              <option value="Facebook">Facebook</option>
+                              <option value="Instagram">Instagram</option>
+                              <option value="TikTok/Reels">TikTok/Reels</option>
+                              <option value="Google Search">Google Search</option>
+                              <option value="YouTube/Reels">YouTube/Reels</option>
+                            </select>
+                          </label>
+
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Daily Budget (BDT)</span>
+                            <input
+                              type="number"
+                              required
+                              min="1"
+                              value={campaignForm.dailyBudgetBDT}
+                              onChange={(e) => setCampaignForm((prev) => ({ ...prev, dailyBudgetBDT: e.target.value }))}
+                              placeholder="500"
+                              className="styled-input"
+                            />
+                          </label>
+                        </div>
+
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <span style={{ fontSize: '0.74rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Campaign Approval Notes (Optional)</span>
+                          <textarea
+                            value={campaignForm.notes}
+                            onChange={(e) => setCampaignForm((prev) => ({ ...prev, notes: e.target.value }))}
+                            placeholder="Specify target audience parameters, run duration or testing parameters..."
+                            className="styled-textarea"
+                            style={{ minHeight: '60px' }}
+                          />
+                        </label>
+
+                        {/* Guard Checks Live Panel */}
+                        <div style={{
+                          background: 'rgba(255, 255, 255, 0.015)', border: '1px solid rgba(255, 255, 255, 0.05)',
+                          borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px'
+                        }}>
+                          <div style={{ fontSize: '0.75rem', fontWeight: '900', color: 'hsl(var(--text-muted))', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', paddingBottom: '6px', marginBottom: '2px' }}>
+                            Ecosystem Campaign Validation Guards
+                          </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))' }}>1. Active Pricing Plan Exists</span>
+                            {selectedPricingProduct && selectedPricingProduct.planStatus === 'ACTIVE' ? (
+                              <span style={{ color: '#34a853', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={14} /> Active (BDT {Number(selectedPricingProduct.adminSellingPrice).toFixed(0)})
+                              </span>
+                            ) : (
+                              <span style={{ color: '#ea4335', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <X size={14} /> Missing Active Plan
+                              </span>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))' }}>2. Target Location Synced</span>
+                            {activeLocationSuggestion ? (
+                              <span style={{ color: '#34a853', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={14} /> Synced ({activeLocationSuggestion.testedLocation})
+                              </span>
+                            ) : (
+                              <span style={{ color: '#ea4335', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <X size={14} /> Need sync
+                              </span>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))' }}>3. SELL Available Stock &gt; 0</span>
+                            {sellAvailableForCommand > 0 ? (
+                              <span style={{ color: '#34a853', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={14} /> Available ({sellAvailableForCommand} units)
+                              </span>
+                            ) : (
+                              <span style={{ color: '#ea4335', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <X size={14} /> Zero stock
+                              </span>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))' }}>4. Projected Net Margin &ge; 15%</span>
+                            {projectedMarginPercent >= 15 ? (
+                              <span style={{ color: '#34a853', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={14} /> Margin is {projectedMarginPercent.toFixed(1)}%
+                              </span>
+                            ) : (
+                              <span style={{ color: '#ea4335', fontSize: '0.82rem', fontWeight: '750', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <X size={14} /> Low Margin ({projectedMarginPercent.toFixed(1)}%)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Submit Button */}
+                        <button
+                          type="submit"
+                          disabled={
+                            campaignApproving ||
+                            !selectedAdsProductId ||
+                            !campaignForm.selectedLocation ||
+                            !(selectedPricingProduct && selectedPricingProduct.planStatus === 'ACTIVE') ||
+                            !activeLocationSuggestion ||
+                            !(sellAvailableForCommand > 0) ||
+                            !(projectedMarginPercent >= 15)
+                          }
+                          className="btn-primary"
+                          style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '14px 18px', background: 'linear-gradient(135deg, #34a853, #1b7a32)', color: '#fff', border: 'none' }}
+                        >
+                          {campaignApproving ? <RefreshCw size={16} className="spin-anim" /> : <Megaphone size={16} />}
+                          {campaignApproving ? 'Approving Campaign...' : 'Approve Test Campaign'}
+                        </button>
+                      </form>
+
+                      {/* Active Campaigns Panel */}
+                      <div className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '12px' }}>
+                          <div style={{
+                            width: '40px', height: '40px', borderRadius: '12px', background: 'rgba(251, 188, 5, 0.12)',
+                            border: '1px solid rgba(251, 188, 5, 0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fbbc05'
+                          }}>
+                            <BarChart3 size={20} />
+                          </div>
+                          <div>
+                            <h3 style={{ margin: 0, fontSize: '1.12rem' }}>Active Campaign Control</h3>
+                            <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                              Ecosystem testing campaign status tracking & control.
+                            </p>
+                          </div>
+                        </div>
+
+                        {campaigns.length === 0 ? (
+                          <div style={{ padding: '40px 20px', textAlign: 'center', color: 'hsl(var(--text-muted))', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                            <Megaphone size={28} style={{ color: 'hsl(var(--text-muted))' }} />
+                            <span>No approved campaigns initialized yet.</span>
+                          </div>
+                        ) : (
+                          <div className="custom-scrollbar" style={{ maxHeight: '420px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {campaigns.map((camp) => (
+                              <div key={camp.campaignId} style={{
+                                padding: '16px', borderRadius: '16px', background: 'rgba(255,255,255,0.025)',
+                                border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', gap: '10px'
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                  <div>
+                                    <div style={{ fontWeight: '850', color: '#fff', fontSize: '0.92rem' }}>{camp.productName}</div>
+                                    <div style={{ fontSize: '0.76rem', color: 'hsl(var(--text-muted))', marginTop: '2px' }}>
+                                      Location: <strong>{camp.selectedLocation}</strong> | Platform: <strong>{camp.platform}</strong>
+                                    </div>
+                                  </div>
+                                  <span className={`pill-badge ${
+                                    camp.status === 'APPROVED_FOR_TEST' ? 'pill-approved' :
+                                    camp.status === 'PAUSED' ? 'pill-submitted' :
+                                    camp.status === 'COMPLETED' ? 'pill-draft' :
+                                    'pill-pending'
+                                  }`}>
+                                    {camp.status}
+                                  </span>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '10px' }}>
+                                  <div>
+                                    <div style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', textTransform: 'uppercase' }}>Daily Budget</div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#fff', marginTop: '2px' }}>৳{camp.dailyBudgetBDT}</div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', textTransform: 'uppercase' }}>Total Budget</div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#fff', marginTop: '2px' }}>৳{camp.totalBudgetBDT}</div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', textTransform: 'uppercase' }}>Expected Orders</div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: '800', color: 'hsl(var(--primary))', marginTop: '2px' }}>{camp.expectedOrderRange}</div>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', color: 'hsl(var(--text-muted))', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '8px', marginTop: '2px' }}>
+                                  <span>Approved by: <strong>{camp.approvedByAdmin}</strong></span>
+                                  
+                                  <div style={{ display: 'flex', gap: '6px' }}>
+                                    {camp.status === 'APPROVED_FOR_TEST' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateCampaignStatus(camp.campaignId, 'PAUSED')}
+                                        className="btn-secondary"
+                                        style={{ padding: '4px 8px', fontSize: '0.7rem', borderColor: 'rgba(251, 188, 5, 0.3)', color: '#fbbc05' }}
+                                      >
+                                        Pause
+                                      </button>
+                                    )}
+                                    {camp.status === 'PAUSED' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateCampaignStatus(camp.campaignId, 'APPROVED_FOR_TEST')}
+                                        className="btn-secondary"
+                                        style={{ padding: '4px 8px', fontSize: '0.7rem', borderColor: 'rgba(52, 168, 83, 0.3)', color: '#34a853' }}
+                                      >
+                                        Resume
+                                      </button>
+                                    )}
+                                    {(camp.status === 'APPROVED_FOR_TEST' || camp.status === 'PAUSED') && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateCampaignStatus(camp.campaignId, 'COMPLETED')}
+                                        className="btn-secondary"
+                                        style={{ padding: '4px 8px', fontSize: '0.7rem', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'hsl(var(--text-secondary))' }}
+                                      >
+                                        Complete
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
 
                 </div>
               )}
