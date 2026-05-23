@@ -107,6 +107,10 @@ exports.createOrder = async (req, res) => {
   const customerEmail = req.user?.email || 'customer@test.com';
   const activeSaleChannel = saleChannel || 'ONLINE';
 
+  if (activeSaleChannel !== 'ONLINE' && activeSaleChannel !== 'PHYSICAL_SHOP') {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'saleChannel must be either ONLINE or PHYSICAL_SHOP' });
+  }
+
   if (!orderRef || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'orderRef and a non-empty items array are required' });
   }
@@ -142,6 +146,10 @@ exports.createOrder = async (req, res) => {
       }
 
       // 3. Insert Order Header
+      const isPhysical = activeSaleChannel === 'PHYSICAL_SHOP';
+      const paymentProvider = req.body.paymentMethod || req.body.paymentProvider || 'CASH';
+      const transactionId = req.body.transactionId || ('POS-' + Date.now());
+
       const orderInsertRes = await transaction.request()
         .input('orderRef', sql.NVarChar(100), orderRef)
         .input('customerEmail', sql.NVarChar(255), customerEmail)
@@ -149,7 +157,13 @@ exports.createOrder = async (req, res) => {
         .input('currency', sql.NVarChar(10), currency || 'BDT')
         .input('customerPhone', sql.NVarChar(50), customerPhone || null)
         .input('saleChannel', sql.NVarChar(50), activeSaleChannel)
-        .query(`
+        .input('paymentProvider', sql.NVarChar(50), paymentProvider)
+        .input('transactionId', sql.NVarChar(100), transactionId)
+        .query(isPhysical ? `
+          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, PaymentStatus, TotalAmount, PaidAmount, PaidAt, Currency, CustomerPhone, SaleChannel, PaymentProvider, TransactionId)
+          OUTPUT inserted.OrderId
+          VALUES (@orderRef, @customerEmail, 'CONFIRMED', 'PAYMENT_VERIFIED', @totalAmount, @totalAmount, SYSUTCDATETIME(), @currency, @customerPhone, @saleChannel, @paymentProvider, @transactionId)
+        ` : `
           INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency, CustomerPhone, SaleChannel)
           OUTPUT inserted.OrderId
           VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency, @customerPhone, @saleChannel)
@@ -157,7 +171,7 @@ exports.createOrder = async (req, res) => {
 
       const orderId = orderInsertRes.recordset[0].OrderId;
 
-      // 4. Process items: insert to OrderItems and reserve MASTER stock via sp_InventoryApplyTransaction
+      // 4. Process items: insert to OrderItems and reserve/commit MASTER stock via sp_InventoryApplyTransaction
       for (const item of items) {
         // A. Insert Item record
         await transaction.request()
@@ -170,23 +184,23 @@ exports.createOrder = async (req, res) => {
             VALUES (@orderId, @productId, @qty, @unitPrice)
           `);
 
-        // B. Apply MASTER RESERVE (Using capitalized parameter names as declared in SP)
+        // B. Apply MASTER RESERVE or OUT
         await transaction.request()
           .input('ProductId', sql.Int, item.productId)
           .input('LedgerType', sql.NVarChar(20), 'MASTER')
-          .input('TxnType', sql.NVarChar(30), 'RESERVE')
+          .input('TxnType', sql.NVarChar(30), isPhysical ? 'OUT' : 'RESERVE')
           .input('Qty', sql.Int, item.qty)
-          .input('RefType', sql.NVarChar(50), 'ORDER_RESERVE')
+          .input('RefType', sql.NVarChar(50), isPhysical ? 'ORDER_COMMIT' : 'ORDER_RESERVE')
           .input('RefId', sql.NVarChar(100), orderRef)
-          .input('Note', sql.NVarChar(255), 'Reserve order stock')
+          .input('Note', sql.NVarChar(255), isPhysical ? 'Commit order stock directly' : 'Reserve order stock')
           .input('CreatedByEmail', sql.NVarChar(255), customerEmail)
           .execute('dbo.sp_InventoryApplyTransaction');
       }
 
       await transaction.commit();
 
-      // Trigger WhatsApp order confirmation asynchronously
-      if (customerPhone) {
+      // Trigger WhatsApp order confirmation asynchronously (ONLINE only)
+      if (!isPhysical && customerPhone) {
         const whatsappService = require('../services/whatsappService');
         const customerName = customerEmail.split('@')[0];
         whatsappService.sendTemplateMessage({
@@ -198,19 +212,20 @@ exports.createOrder = async (req, res) => {
       }
 
       logger.info({
-        event: 'order.reserve',
+        event: isPhysical ? 'order.commit' : 'order.reserve',
         reqId: req.reqId,
         orderRef,
-        status: 'PENDING'
+        status: isPhysical ? 'CONFIRMED' : 'PENDING'
       });
 
       res.status(201).json({
         orderId: parseInt(orderId),
         orderRef,
-        status: 'PENDING',
-        reservation: 'DONE'
+        status: isPhysical ? 'CONFIRMED' : 'PENDING',
+        [isPhysical ? 'stockAction' : 'reservation']: 'DONE'
       });
     } catch (err) {
+      logger.error(err, "Create order failed error");
       try {
         await transaction.rollback();
       } catch (rollbackErr) {
