@@ -135,7 +135,7 @@ exports.approveTestCampaign = async (req, res) => {
       .query(`
         SELECT ISNULL(OnHandQty, 0) - ISNULL(ReservedQty, 0) AS SellAvailable
         FROM dbo.InventoryLedgers
-        WHERE ProductId = @productId AND LedgerType = 'SELL'
+        WHERE ProductId = @productId AND LedgerType = 'MASTER'
       `);
 
     const sellAvailable = Number(stockRes.recordset[0]?.SellAvailable || 0);

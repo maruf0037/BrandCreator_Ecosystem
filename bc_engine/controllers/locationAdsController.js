@@ -1,4 +1,4 @@
-﻿const { poolPromise, sql } = require('../config/db');
+const { poolPromise, sql } = require('../config/db');
 
 const locationDefaults = {
   uttara: {
@@ -164,7 +164,7 @@ async function loadProduct(pool, productId) {
         ISNULL(sl.ReservedQty, 0) AS SellReserved
       FROM dbo.Products p
       LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
-      LEFT JOIN dbo.InventoryLedgers sl ON p.ProductId = sl.ProductId AND sl.LedgerType = 'SELL'
+      LEFT JOIN dbo.InventoryLedgers sl ON p.ProductId = sl.ProductId AND sl.LedgerType = 'MASTER'
       WHERE p.ProductId = @productId
       ORDER BY pi.IsPrimary DESC, pi.CreatedAt DESC
     `);

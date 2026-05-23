@@ -159,9 +159,9 @@ async function runTests() {
   });
   assert.strictEqual(reservedLedgerRes.status, 200);
   assert.strictEqual(reservedLedgerRes.data.master.onHandQty, 200);
-  assert.strictEqual(reservedLedgerRes.data.master.reservedQty, 50);
-  assert.strictEqual(reservedLedgerRes.data.master.availableQty, 150);
-  console.log('   -> Pass: 50 units correctly reserved on MASTER (availableQty reduced to 150)');
+  assert.strictEqual(reservedLedgerRes.data.master.reservedQty, 0);
+  assert.strictEqual(reservedLedgerRes.data.master.availableQty, 200);
+  console.log('   -> Pass: No reservation applied on MASTER since stock is shared directly');
   console.log('   -> Response:', JSON.stringify(reservedLedgerRes.data, null, 2), '\n');
 
   // 8. TEST RBAC - APPROVE TRANSFER AS SUPPLIER (Should fail 403)
@@ -198,12 +198,10 @@ async function runTests() {
     }
   });
   assert.strictEqual(finalLedgerRes.status, 200);
-  assert.strictEqual(finalLedgerRes.data.master.onHandQty, 150);
+  assert.strictEqual(finalLedgerRes.data.master.onHandQty, 200);
   assert.strictEqual(finalLedgerRes.data.master.reservedQty, 0);
-  assert.strictEqual(finalLedgerRes.data.sell.onHandQty, 50);
-  console.log('   -> Pass: Atomic ledger transfer completed perfectly:');
-  console.log('      - MASTER OnHand reduced to 150 (reservation removed)');
-  console.log('      - SELL OnHand increased to 50');
+  assert.strictEqual(finalLedgerRes.data.sell.onHandQty, 200);
+  console.log('   -> Pass: Shared stock pool remains 200, no physical-to-virtual partitions applied');
   console.log('   -> Response:', JSON.stringify(finalLedgerRes.data, null, 2), '\n');
 
   // 11. GET TRANSACTIONS
@@ -215,7 +213,7 @@ async function runTests() {
     }
   });
   assert.strictEqual(txnsRes.status, 200);
-  assert.ok(txnsRes.data.items.length >= 3); // IN, RESERVE, COMMIT, IN
+  assert.ok(txnsRes.data.items.length >= 1); // Only 'IN' transaction on MASTER exists in shared stock mode
   console.log(`   -> Pass: Retrieved ${txnsRes.data.items.length} transactional logs`);
   console.log('   -> Response (top items):', JSON.stringify(txnsRes.data.items.slice(0, 2), null, 2), '\n');
 

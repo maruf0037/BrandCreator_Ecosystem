@@ -1,7 +1,7 @@
 // src/pages/AdminDashboard.jsx
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { 
-  ShieldAlert, BarChart3, AlertCircle, HelpCircle, Mail, Settings, 
+  ShieldAlert, BarChart3, AlertCircle, 
   DollarSign, LogOut, Package, RefreshCw, Layers, Check, X, 
   ArrowRight, UserPlus, Sliders, AlertTriangle, Play, FileText, Send,
   MapPin, Target, Megaphone, MessageCircle
@@ -571,7 +571,6 @@ export default function AdminDashboard({ currentUser }) {
   const supplierRpu = toNumber(selectedPricingProduct?.rpuMrp ?? selectedPricingProduct?.basePrice);
   const adminSellingPrice = toNumber(pricingForm.adminSellingPrice);
   const plannedAdsCost = toNumber(pricingForm.adBudgetPlanned);
-  const platformCommission = toNumber(pricingForm.platformCommission);
   const deliveryOpsCost = toNumber(pricingForm.deliveryOpsCost);
   const discountAmount = toNumber(pricingForm.discountAmount);
   const projectedNetProfit = adminSellingPrice - supplierRpu - plannedAdsCost - deliveryOpsCost - discountAmount;
@@ -858,7 +857,7 @@ export default function AdminDashboard({ currentUser }) {
               <button 
                 onClick={() => setActiveTab('transfers')} 
                 className={`sidebar-link w-full text-left ${activeTab === 'transfers' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease', display: 'none' }}
               >
                 <Layers size={18} />
                 Transfers ({transfers.filter(t => t.status === 'PENDING').length})

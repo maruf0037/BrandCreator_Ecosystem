@@ -1,9 +1,10 @@
 // src/pages/SupplierDashboard.jsx
-import React, { useState, useEffect } from 'react';
+/* eslint-disable react-hooks/set-state-in-effect */
+import { useState, useEffect } from 'react';
 import { 
-  Package, CloudLightning, HardDrive, KeyRound, CheckCircle, 
+  Package, HardDrive, KeyRound, CheckCircle, 
   BarChart, PlusCircle, LogOut, RefreshCw, Send, Check, X, 
-  AlertCircle, History, ListCollapse, ArrowRight, Info 
+  AlertCircle, History, Upload
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -38,6 +39,8 @@ export default function SupplierDashboard({ currentUser }) {
   const [newDeliveryCoverageJson, setNewDeliveryCoverageJson] = useState('');
   const [newOnlineSellingRequested, setNewOnlineSellingRequested] = useState(true);
   const [newImageUrl, setNewImageUrl] = useState('');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageUploadMeta, setImageUploadMeta] = useState(null);
   const [creating, setCreating] = useState(false);
 
   // Transfer Request Form State
@@ -137,11 +140,35 @@ export default function SupplierDashboard({ currentUser }) {
       setNewDeliveryCoverageJson('');
       setNewOnlineSellingRequested(true);
       setNewImageUrl('');
+      setImageUploadMeta(null);
       fetchSupplierData();
     } catch (err) {
       setError(err.message || 'Failed to create new product. Check for duplicate SKU.');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleProductImageUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    setImageUploadMeta(null);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      const result = await api.upload('/api/uploads/product-image', formData);
+      setNewImageUrl(result.imageUrl);
+      setImageUploadMeta(result);
+      showToast('Image compressed, uploaded to Google Drive, and linked automatically.');
+    } catch (err) {
+      setError(err.message || 'Image upload failed. Check Google Drive configuration.');
+    } finally {
+      setUploadingImage(false);
+      event.target.value = '';
     }
   };
 
@@ -461,7 +488,7 @@ export default function SupplierDashboard({ currentUser }) {
               <button 
                 onClick={() => setActiveTab('transfers')} 
                 className={`sidebar-link w-full text-left ${activeTab === 'transfers' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease', display: 'none' }}
               >
                 <Send size={18} />
                 Transfer Requests ({transfers.length})
@@ -611,14 +638,35 @@ export default function SupplierDashboard({ currentUser }) {
                             />
                           </div>
                           <div>
-                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>PRODUCT IMAGE URL</label>
+                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>PRODUCT IMAGE</label>
+                            <label className="btn-secondary" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: uploadingImage ? 'wait' : 'pointer', marginBottom: '10px', opacity: uploadingImage ? 0.7 : 1 }}>
+                              {uploadingImage ? <RefreshCw size={16} className="spin-anim" /> : <Upload size={16} />}
+                              {uploadingImage ? 'Compressing + uploading...' : 'Upload to Google Drive'}
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp"
+                                onChange={handleProductImageUpload}
+                                disabled={uploadingImage}
+                                style={{ display: 'none' }}
+                              />
+                            </label>
                             <input 
                               type="text"
                               value={newImageUrl}
                               onChange={(e) => setNewImageUrl(e.target.value)}
-                              placeholder="e.g. https://images.unsplash.com/photo-..."
+                              placeholder="Upload image or paste image URL"
                               className="styled-input"
                             />
+                            {newImageUrl && (
+                              <div style={{ marginTop: '10px', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', overflow: 'hidden', background: 'rgba(255,255,255,0.03)' }}>
+                                <img src={newImageUrl} alt="Product preview" style={{ width: '100%', height: '150px', objectFit: 'cover', display: 'block' }} />
+                              </div>
+                            )}
+                            {imageUploadMeta && (
+                              <p style={{ marginTop: '8px', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
+                                Saved to Drive as compressed WebP. Size: {Math.round((imageUploadMeta.compressedSize || 0) / 1024)} KB.
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -912,7 +960,8 @@ export default function SupplierDashboard({ currentUser }) {
                                         fontSize: '0.78rem', 
                                         borderRadius: '8px', 
                                         opacity: p.masterOnHand - p.masterReserved <= 0 ? 0.4 : 1,
-                                        cursor: p.masterOnHand - p.masterReserved <= 0 ? 'not-allowed' : 'pointer'
+                                        cursor: p.masterOnHand - p.masterReserved <= 0 ? 'not-allowed' : 'pointer',
+                                        display: 'none'
                                       }}
                                       title={p.masterOnHand - p.masterReserved <= 0 ? "No available MASTER stock to transfer" : "Request physical to virtual transfer"}
                                     >
@@ -1087,8 +1136,8 @@ export default function SupplierDashboard({ currentUser }) {
                                 <p style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', fontStyle: 'italic', padding: '12px 0' }}>No audit status changes logged yet.</p>
                               ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                  {historyEvents.map(evt => (
-                                    <div key={evt.EventId || Math.random()} style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                  {historyEvents.map((evt, index) => (
+                                    <div key={evt.EventId || evt.eventId || `event-${index}`} style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
                                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                                         <strong style={{ color: 'hsl(var(--primary))', fontSize: '0.9rem' }}>{evt.Action}</strong>
                                         <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>{new Date(evt.CreatedAt || evt.createdAt).toLocaleString()}</span>
@@ -1107,8 +1156,8 @@ export default function SupplierDashboard({ currentUser }) {
                                 <p style={{ fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', fontStyle: 'italic', padding: '12px 0' }}>No automatic enrichment tasks executed.</p>
                               ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                  {historyJobs.map(job => (
-                                    <div key={job.JobId || Math.random()} style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                  {historyJobs.map((job, index) => (
+                                    <div key={job.JobId || job.jobId || `job-${index}`} style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
                                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                                         <strong style={{ color: job.Status === 'SUCCEEDED' ? '#34a853' : '#ea4335', fontSize: '0.9rem' }}>
                                           {job.Status}

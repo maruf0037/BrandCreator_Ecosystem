@@ -1,9 +1,10 @@
 // src/pages/Shop.jsx
-import React, { useState, useEffect } from 'react';
+/* eslint-disable react-hooks/set-state-in-effect */
+import { useState, useEffect } from 'react';
 import { 
-  ShoppingBag, Star, HelpCircle, Heart, LogOut, RefreshCw, 
+  ShoppingBag, Heart, LogOut, RefreshCw, 
   ShoppingCart, Trash2, Check, X, AlertCircle, ShoppingCartIcon,
-  Sparkles, Clock, ArrowRight, ShieldCheck, Tag
+  Clock, ShieldCheck, Tag
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -78,6 +79,27 @@ const shopStyles = `
     background: rgba(255, 255, 255, 0.15);
   }
 `;
+
+const SkeletonCard = () => (
+  <div className="glass-card" style={{ padding: '0', borderRadius: '20px', overflow: 'hidden', height: '480px', display: 'flex', flexDirection: 'column', border: '1px solid rgba(255,255,255,0.04)', background: 'rgba(15, 22, 36, 0.4)' }}>
+    <div className="skeleton-shimmer" style={{ height: '260px', width: '100%' }} />
+    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div className="skeleton-shimmer" style={{ height: '14px', width: '30%', borderRadius: '4px' }} />
+        <div className="skeleton-shimmer" style={{ height: '20px', width: '75%', borderRadius: '4px', marginTop: '4px' }} />
+        <div className="skeleton-shimmer" style={{ height: '14px', width: '90%', borderRadius: '4px', marginTop: '6px' }} />
+        <div className="skeleton-shimmer" style={{ height: '14px', width: '60%', borderRadius: '4px' }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '40%' }}>
+          <div className="skeleton-shimmer" style={{ height: '12px', width: '50%', borderRadius: '4px' }} />
+          <div className="skeleton-shimmer" style={{ height: '18px', width: '90%', borderRadius: '4px' }} />
+        </div>
+        <div className="skeleton-shimmer" style={{ height: '40px', width: '45%', borderRadius: '8px' }} />
+      </div>
+    </div>
+  </div>
+);
 
 export default function Shop({ currentUser }) {
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
@@ -220,7 +242,8 @@ export default function Shop({ currentUser }) {
         orderRef,
         items: itemsPayload,
         currency: 'BDT',
-        customerPhone: customerPhone.trim()
+        customerPhone: customerPhone.trim(),
+        saleChannel: 'ONLINE'
       });
 
       setCustomerPhone('');
@@ -271,28 +294,6 @@ export default function Shop({ currentUser }) {
       setError(err.message || 'Failed to cancel order');
     }
   };
-
-  // Skeleton Card component
-  const SkeletonCard = () => (
-    <div className="glass-card" style={{ padding: '0', borderRadius: '20px', overflow: 'hidden', height: '480px', display: 'flex', flexDirection: 'column', border: '1px solid rgba(255,255,255,0.04)', background: 'rgba(15, 22, 36, 0.4)' }}>
-      <div className="skeleton-shimmer" style={{ height: '260px', width: '100%' }} />
-      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div className="skeleton-shimmer" style={{ height: '14px', width: '30%', borderRadius: '4px' }} />
-          <div className="skeleton-shimmer" style={{ height: '20px', width: '75%', borderRadius: '4px', marginTop: '4px' }} />
-          <div className="skeleton-shimmer" style={{ height: '14px', width: '90%', borderRadius: '4px', marginTop: '6px' }} />
-          <div className="skeleton-shimmer" style={{ height: '14px', width: '60%', borderRadius: '4px' }} />
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '40%' }}>
-            <div className="skeleton-shimmer" style={{ height: '12px', width: '50%', borderRadius: '4px' }} />
-            <div className="skeleton-shimmer" style={{ height: '18px', width: '90%', borderRadius: '4px' }} />
-          </div>
-          <div className="skeleton-shimmer" style={{ height: '40px', width: '45%', borderRadius: '8px' }} />
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <div>

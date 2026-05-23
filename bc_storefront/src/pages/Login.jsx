@@ -1,7 +1,7 @@
 // src/pages/Login.jsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Sparkles, Database, CloudLightning, ArrowRight, RefreshCw } from 'lucide-react';
+import { Shield, Sparkles, Database, CloudLightning, RefreshCw } from 'lucide-react';
 
 export default function Login() {
   const navigate = useNavigate();

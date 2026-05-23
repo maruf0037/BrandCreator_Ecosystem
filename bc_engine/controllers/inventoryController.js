@@ -154,9 +154,9 @@ exports.getProductLedgers = async (req, res) => {
         availableQty: masterLedger.OnHandQty - masterLedger.ReservedQty
       },
       sell: {
-        onHandQty: sellLedger.OnHandQty,
-        reservedQty: sellLedger.ReservedQty,
-        availableQty: sellLedger.OnHandQty - sellLedger.ReservedQty
+        onHandQty: masterLedger.OnHandQty,
+        reservedQty: masterLedger.ReservedQty,
+        availableQty: masterLedger.OnHandQty - masterLedger.ReservedQty
       }
     });
   } catch (err) {
@@ -263,18 +263,9 @@ exports.createTransfer = async (req, res) => {
 
       const transfer = transferResult.recordset[0];
 
-      // 3. RESERVE the quantity in the MASTER ledger via Stored Procedure
-      await transaction.request()
-        .input('ProductId', sql.Int, productId)
-        .input('LedgerType', sql.NVarChar(20), 'MASTER')
-        .input('TxnType', sql.NVarChar(30), 'RESERVE')
-        .input('Qty', sql.Int, qty)
-        .input('RefType', sql.NVarChar(50), 'TRANSFER')
-        .input('RefId', sql.NVarChar(100), transfer.TransferId.toString())
-        .input('Note', sql.NVarChar(500), 'Reserve for transfer request #' + transfer.TransferId)
-        .input('CreatedByEmail', sql.NVarChar(255), requestedByEmail)
-        .execute('dbo.sp_InventoryApplyTransaction');
-
+      // 3. (NO-OP/DEPRECATED in shared stock mode) Reserve is no longer needed on MASTER
+      // keeping the TransferRequest log for system tracking/compatibility.
+      
       await transaction.commit();
 
       res.status(201).json({
@@ -318,29 +309,8 @@ exports.approveTransfer = async (req, res) => {
         return res.status(400).json({ error: 'INVALID_STATUS', message: `Transfer request is already ${transfer.Status}` });
       }
 
-      // 2. Commit the reservation on MASTER (subtract from OnHand and Reserved)
-      await transaction.request()
-        .input('ProductId', sql.Int, transfer.ProductId)
-        .input('LedgerType', sql.NVarChar(20), 'MASTER')
-        .input('TxnType', sql.NVarChar(30), 'COMMIT')
-        .input('Qty', sql.Int, transfer.Qty)
-        .input('RefType', sql.NVarChar(50), 'TRANSFER_APPROVE')
-        .input('RefId', sql.NVarChar(100), id.toString())
-        .input('Note', sql.NVarChar(500), 'Commit transfer stock')
-        .input('CreatedByEmail', sql.NVarChar(255), approvedByEmail)
-        .execute('dbo.sp_InventoryApplyTransaction');
-
-      // 3. Receive the stock in SELL (add to OnHand)
-      await transaction.request()
-        .input('ProductId', sql.Int, transfer.ProductId)
-        .input('LedgerType', sql.NVarChar(20), 'SELL')
-        .input('TxnType', sql.NVarChar(30), 'IN')
-        .input('Qty', sql.Int, transfer.Qty)
-        .input('RefType', sql.NVarChar(50), 'TRANSFER_APPROVE')
-        .input('RefId', sql.NVarChar(100), id.toString())
-        .input('Note', sql.NVarChar(500), 'Receive transfer stock')
-        .input('CreatedByEmail', sql.NVarChar(255), approvedByEmail)
-        .execute('dbo.sp_InventoryApplyTransaction');
+      // 2. (NO-OP/DEPRECATED in shared stock mode) Stock transaction is no longer needed on MASTER/SELL.
+      // Keeping the TransferRequest status update for compatibility.
 
       // 4. Update the Transfer Request status
       await transaction.request()
@@ -360,7 +330,6 @@ exports.approveTransfer = async (req, res) => {
       await transaction.commit();
 
       const masterLedger = ledgersResult.recordset.find(l => l.LedgerType === 'MASTER') || { OnHandQty: 0, ReservedQty: 0 };
-      const sellLedger = ledgersResult.recordset.find(l => l.LedgerType === 'SELL') || { OnHandQty: 0, ReservedQty: 0 };
 
       res.json({
         transferId: parseInt(id),
@@ -368,7 +337,7 @@ exports.approveTransfer = async (req, res) => {
         productId: transfer.ProductId,
         movedQty: transfer.Qty,
         master: { onHandQty: masterLedger.OnHandQty, reservedQty: masterLedger.ReservedQty },
-        sell: { onHandQty: sellLedger.OnHandQty, reservedQty: sellLedger.ReservedQty }
+        sell: { onHandQty: masterLedger.OnHandQty, reservedQty: masterLedger.ReservedQty } // Aliased from MASTER for compatibility
       });
     } catch (err) {
       await transaction.rollback();
@@ -511,7 +480,7 @@ exports.getProducts = async (req, res) => {
                  p.OnlineSellingRequested AS onlineSellingRequested, p.ProductReadinessStatus AS productReadinessStatus,
                  pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
-                 COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved,
+                 COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved,
                  ap.AdminSellingPrice AS adminSellingPrice,
                  ap.AdBudgetPlanned AS adBudgetPlanned,
                  ap.PlatformCommission AS platformCommission,
@@ -525,7 +494,6 @@ exports.getProducts = async (req, res) => {
           FROM dbo.Products p
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
-          LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
           LEFT JOIN dbo.AdminPricingPlans ap ON p.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
           ORDER BY p.ProductId DESC
         `);
@@ -560,12 +528,11 @@ exports.getProducts = async (req, res) => {
                  p.OnlineSellingRequested AS onlineSellingRequested, p.ProductReadinessStatus AS productReadinessStatus,
                  pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
-                 COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved
+                 COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved
           FROM dbo.Products p
           INNER JOIN dbo.ProductOwnership o ON p.ProductId = o.ProductId
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
-          LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
           WHERE o.SupplierEmail = @email AND o.IsActive = 1
           ORDER BY p.ProductId DESC
         `);
@@ -597,11 +564,11 @@ exports.getProducts = async (req, res) => {
                  p.RPU_MRP AS rpuMrp, p.SuggestedRetailPrice AS suggestedRetailPrice,
                  p.VariantsJson AS variantsJson, p.SupplierLocation AS supplierLocation,
                  pi.ImageUrl AS imageUrl,
-                 COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved,
+                 COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved,
                  ap.AdminSellingPrice AS adminSellingPrice
           FROM dbo.Products p
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
-          LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
+          LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
           LEFT JOIN dbo.AdminPricingPlans ap ON p.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
           WHERE p.Status = 'ACTIVE' AND p.QCStatus = 'APPROVED'
           ORDER BY p.ProductId DESC

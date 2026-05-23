@@ -13,6 +13,8 @@ const locationAdsRoutes = require('./routes/locationAdsRoutes');
 const campaignRoutes = require('./routes/campaignRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
 const walletRoutes = require('./routes/walletRoutes');
+const returnRoutes = require('./routes/returnRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 const healthRoutes = require('./src/routes/healthRoutes');
 
 // Observability Additions
@@ -92,6 +94,8 @@ app.use('/api', locationAdsRoutes);
 app.use('/api/admin/campaigns', campaignRoutes);
 app.use('/api', whatsappRoutes);
 app.use('/api', walletRoutes);
+app.use('/api', returnRoutes);
+app.use('/api', uploadRoutes);
 app.use('/', healthRoutes); // GET /health/deep
 
 // Global http error tracking middleware

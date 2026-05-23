@@ -12,10 +12,11 @@ export const BASE_URL = (VITE_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/,
  */
 async function apiFetch(endpoint, options = {}) {
   const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint}`;
+  const isFormData = options.body instanceof FormData;
   
   const headers = {
-    'Content-Type': 'application/json',
     'Accept': 'application/json',
+    ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
     ...options.headers,
   };
 
@@ -64,6 +65,11 @@ export const api = {
     method: 'POST', 
     headers, 
     body: body ? JSON.stringify(body) : undefined 
+  }),
+  upload: (endpoint, formData, headers = {}) => apiFetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: formData
   }),
   put: (endpoint, body, headers = {}) => apiFetch(endpoint, { 
     method: 'PUT', 

@@ -161,7 +161,7 @@ exports.getLowStockAlerts = async (req, res) => {
         policy.MasterLowStockThreshold AS masterThreshold
       FROM dbo.Products p
       INNER JOIN dbo.ProductStockPolicies policy ON p.ProductId = policy.ProductId
-      LEFT JOIN dbo.InventoryLedgers lsell ON p.ProductId = lsell.ProductId AND lsell.LedgerType = 'SELL'
+      LEFT JOIN dbo.InventoryLedgers lsell ON p.ProductId = lsell.ProductId AND lsell.LedgerType = 'MASTER'
       LEFT JOIN dbo.InventoryLedgers lmaster ON p.ProductId = lmaster.ProductId AND lmaster.LedgerType = 'MASTER'
       WHERE policy.IsAlertEnabled = 1
         AND (

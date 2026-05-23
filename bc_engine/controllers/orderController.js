@@ -5,6 +5,16 @@ const { outboxPendingGauge, webhookVerifyCounter } = require('../src/metrics');
 
 // Helper function to record order item splits in OrderProfitBreakdowns and update profit snapshots
 const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
+  const orderChannelRes = await transaction.request()
+    .input('orderId', sql.BigInt, orderId)
+    .query("SELECT SaleChannel FROM dbo.Orders WHERE OrderId = @orderId");
+  const saleChannel = orderChannelRes.recordset[0]?.SaleChannel || 'ONLINE';
+
+  if (saleChannel !== 'ONLINE') {
+    logger.info(`Skipping profit/ads breakdown recording for non-online order #${orderId} (Channel: ${saleChannel})`);
+    return;
+  }
+
   const result = await transaction.request()
     .input('orderId', sql.BigInt, orderId)
     .query(`
@@ -93,8 +103,9 @@ const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
 
 // POST /api/orders
 exports.createOrder = async (req, res) => {
-  const { orderRef, items, currency, customerPhone } = req.body;
+  const { orderRef, items, currency, customerPhone, saleChannel } = req.body;
   const customerEmail = req.user?.email || 'customer@test.com';
+  const activeSaleChannel = saleChannel || 'ONLINE';
 
   if (!orderRef || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'orderRef and a non-empty items array are required' });
@@ -115,11 +126,11 @@ exports.createOrder = async (req, res) => {
         totalAmount += item.qty * item.unitPrice;
       }
 
-      // 2. Pre-check stock levels in SELL ledger for all products to prevent transaction aborts
+      // 2. Pre-check stock levels in MASTER ledger for all products to prevent transaction aborts
       for (const item of items) {
         const ledgerResult = await transaction.request()
           .input('productId', sql.Int, item.productId)
-          .query("SELECT OnHandQty, ReservedQty FROM dbo.InventoryLedgers WHERE ProductId = @productId AND LedgerType = 'SELL'");
+          .query("SELECT OnHandQty, ReservedQty FROM dbo.InventoryLedgers WHERE ProductId = @productId AND LedgerType = 'MASTER'");
 
         const ledger = ledgerResult.recordset[0] || { OnHandQty: 0, ReservedQty: 0 };
         const available = ledger.OnHandQty - ledger.ReservedQty;
@@ -137,15 +148,16 @@ exports.createOrder = async (req, res) => {
         .input('totalAmount', sql.Decimal(18, 2), totalAmount)
         .input('currency', sql.NVarChar(10), currency || 'BDT')
         .input('customerPhone', sql.NVarChar(50), customerPhone || null)
+        .input('saleChannel', sql.NVarChar(50), activeSaleChannel)
         .query(`
-          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency, CustomerPhone)
+          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency, CustomerPhone, SaleChannel)
           OUTPUT inserted.OrderId
-          VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency, @customerPhone)
+          VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency, @customerPhone, @saleChannel)
         `);
 
       const orderId = orderInsertRes.recordset[0].OrderId;
 
-      // 4. Process items: insert to OrderItems and reserve SELL stock via sp_InventoryApplyTransaction
+      // 4. Process items: insert to OrderItems and reserve MASTER stock via sp_InventoryApplyTransaction
       for (const item of items) {
         // A. Insert Item record
         await transaction.request()
@@ -158,10 +170,10 @@ exports.createOrder = async (req, res) => {
             VALUES (@orderId, @productId, @qty, @unitPrice)
           `);
 
-        // B. Apply SELL RESERVE (Using capitalized parameter names as declared in SP)
+        // B. Apply MASTER RESERVE (Using capitalized parameter names as declared in SP)
         await transaction.request()
           .input('ProductId', sql.Int, item.productId)
-          .input('LedgerType', sql.NVarChar(20), 'SELL')
+          .input('LedgerType', sql.NVarChar(20), 'MASTER')
           .input('TxnType', sql.NVarChar(30), 'RESERVE')
           .input('Qty', sql.Int, item.qty)
           .input('RefType', sql.NVarChar(50), 'ORDER_RESERVE')
@@ -214,7 +226,7 @@ exports.createOrder = async (req, res) => {
       ) {
         return res.status(400).json({
           error: 'INSUFFICIENT_STOCK',
-          message: 'Requested qty exceeds SELL available balance'
+          message: 'Requested qty exceeds MASTER available balance'
         });
       }
 
@@ -357,7 +369,7 @@ exports.confirmOrder = async (req, res) => {
       for (const item of itemsRes.recordset) {
         await transaction.request()
           .input('ProductId', sql.Int, item.ProductId)
-          .input('LedgerType', sql.NVarChar(20), 'SELL')
+          .input('LedgerType', sql.NVarChar(20), 'MASTER')
           .input('TxnType', sql.NVarChar(30), 'COMMIT')
           .input('Qty', sql.Int, item.Qty)
           .input('RefType', sql.NVarChar(50), 'ORDER_COMMIT')
@@ -473,7 +485,7 @@ exports.cancelOrder = async (req, res) => {
       for (const item of itemsRes.recordset) {
         await transaction.request()
           .input('ProductId', sql.Int, item.ProductId)
-          .input('LedgerType', sql.NVarChar(20), 'SELL')
+          .input('LedgerType', sql.NVarChar(20), 'MASTER')
           .input('TxnType', sql.NVarChar(30), 'RELEASE')
           .input('Qty', sql.Int, item.Qty)
           .input('RefType', sql.NVarChar(50), 'ORDER_RELEASE')
@@ -774,7 +786,7 @@ exports.paymentWebhook = async (req, res) => {
           for (const item of itemsRes.recordset) {
             await transaction.request()
               .input('ProductId', sql.Int, item.ProductId)
-              .input('LedgerType', sql.NVarChar(20), 'SELL')
+              .input('LedgerType', sql.NVarChar(20), 'MASTER')
               .input('TxnType', sql.NVarChar(30), 'COMMIT')
               .input('Qty', sql.Int, item.Qty)
               .input('RefType', sql.NVarChar(50), 'WEBHOOK_COMMIT')
@@ -859,7 +871,7 @@ exports.paymentWebhook = async (req, res) => {
           for (const item of itemsRes.recordset) {
             await transaction.request()
               .input('ProductId', sql.Int, item.ProductId)
-              .input('LedgerType', sql.NVarChar(20), 'SELL')
+              .input('LedgerType', sql.NVarChar(20), 'MASTER')
               .input('TxnType', sql.NVarChar(30), 'RELEASE')
               .input('Qty', sql.Int, item.Qty)
               .input('RefType', sql.NVarChar(50), 'WEBHOOK_RELEASE')
