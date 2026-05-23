@@ -94,6 +94,7 @@ export default function Shop({ currentUser }) {
   const [showCartModal, setShowCartModal] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
   const [lastPlacedOrder, setLastPlacedOrder] = useState(null);
+  const [customerPhone, setCustomerPhone] = useState('');
 
   // Tab View for Customer
   const [viewTab, setViewTab] = useState('shop'); // 'shop' or 'orders'
@@ -201,6 +202,10 @@ export default function Shop({ currentUser }) {
   // Checkout / Reserve Order
   const handleCheckout = async () => {
     if (cart.length === 0) return;
+    if (!customerPhone || customerPhone.trim() === '') {
+      setError('Please provide a valid Phone Number for WhatsApp order updates!');
+      return;
+    }
     setError(null);
     setCheckingOut(true);
     try {
@@ -214,8 +219,11 @@ export default function Shop({ currentUser }) {
       await api.post('/api/orders', {
         orderRef,
         items: itemsPayload,
-        currency: 'BDT'
+        currency: 'BDT',
+        customerPhone: customerPhone.trim()
       });
+
+      setCustomerPhone('');
 
       // Populate Checkout success details
       setLastPlacedOrder({
@@ -806,6 +814,31 @@ export default function Shop({ currentUser }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
                   <span style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem' }}>Estimated Subtotal:</span>
                   <strong style={{ fontSize: '1.35rem', color: '#fff', fontWeight: '700' }}>৳{getCartTotal().toLocaleString()}</strong>
+                </div>
+
+                {/* WhatsApp Phone Number Input */}
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', marginBottom: '6px', fontWeight: '600' }}>
+                    WhatsApp Phone Number <span style={{ color: 'hsl(var(--primary))' }}>*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="e.g. +8801712345678"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(255,255,255,0.02)',
+                      color: '#fff',
+                      fontSize: '0.9rem',
+                      outline: 'none',
+                      transition: 'border-color 0.2s'
+                    }}
+                    required
+                  />
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px' }}>

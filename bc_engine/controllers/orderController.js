@@ -93,7 +93,7 @@ const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
 
 // POST /api/orders
 exports.createOrder = async (req, res) => {
-  const { orderRef, items, currency } = req.body;
+  const { orderRef, items, currency, customerPhone } = req.body;
   const customerEmail = req.user?.email || 'customer@test.com';
 
   if (!orderRef || !items || !Array.isArray(items) || items.length === 0) {
@@ -136,10 +136,11 @@ exports.createOrder = async (req, res) => {
         .input('customerEmail', sql.NVarChar(255), customerEmail)
         .input('totalAmount', sql.Decimal(18, 2), totalAmount)
         .input('currency', sql.NVarChar(10), currency || 'BDT')
+        .input('customerPhone', sql.NVarChar(50), customerPhone || null)
         .query(`
-          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency)
+          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency, CustomerPhone)
           OUTPUT inserted.OrderId
-          VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency)
+          VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency, @customerPhone)
         `);
 
       const orderId = orderInsertRes.recordset[0].OrderId;
@@ -171,6 +172,18 @@ exports.createOrder = async (req, res) => {
       }
 
       await transaction.commit();
+
+      // Trigger WhatsApp order confirmation asynchronously
+      if (customerPhone) {
+        const whatsappService = require('../services/whatsappService');
+        const customerName = customerEmail.split('@')[0];
+        whatsappService.sendTemplateMessage({
+          phone: customerPhone,
+          templateName: 'order_confirmation',
+          params: [customerName, orderRef, totalAmount.toFixed(2)],
+          orderId: parseInt(orderId)
+        }).catch(err => logger.error('WhatsApp checkout confirmation error:', err));
+      }
 
       logger.info({
         event: 'order.reserve',
@@ -278,7 +291,7 @@ exports.confirmOrder = async (req, res) => {
       // Get order details
       const orderRes = await transaction.request()
         .input('ref', sql.NVarChar(100), orderRef)
-        .query('SELECT OrderId, Status, PaymentStatus, TotalAmount, PaidAmount FROM dbo.Orders WHERE OrderRef = @ref');
+        .query('SELECT OrderId, Status, PaymentStatus, TotalAmount, PaidAmount, CustomerPhone, CustomerEmail FROM dbo.Orders WHERE OrderRef = @ref');
 
       if (orderRes.recordset.length === 0) {
         return res.status(404).json({ error: 'NOT_FOUND', message: 'Order not found' });
@@ -377,6 +390,18 @@ exports.confirmOrder = async (req, res) => {
         `);
 
       await transaction.commit();
+
+      // Trigger WhatsApp payment confirmation asynchronously
+      if (order.CustomerPhone) {
+        const whatsappService = require('../services/whatsappService');
+        const customerName = (order.CustomerEmail || 'Customer').split('@')[0];
+        whatsappService.sendTemplateMessage({
+          phone: order.CustomerPhone,
+          templateName: 'payment_verified',
+          params: [customerName, orderRef],
+          orderId: order.OrderId
+        }).catch(err => logger.error('WhatsApp payment verification confirm error:', err));
+      }
 
       logger.info({
         event: 'order.confirm',
@@ -733,7 +758,7 @@ exports.paymentWebhook = async (req, res) => {
       try {
         const orderRes = await transaction.request()
           .input('ref', sql.NVarChar(100), orderRef)
-          .query('SELECT OrderId, Status FROM dbo.Orders WHERE OrderRef = @ref');
+          .query('SELECT OrderId, Status, CustomerPhone, CustomerEmail FROM dbo.Orders WHERE OrderRef = @ref');
 
         if (orderRes.recordset.length === 0) {
           throw new Error('Order not found');
@@ -792,6 +817,18 @@ exports.paymentWebhook = async (req, res) => {
         }
 
         await transaction.commit();
+
+        // Trigger WhatsApp payment confirmation asynchronously via Webhook
+        if (order.CustomerPhone) {
+          const whatsappService = require('../services/whatsappService');
+          const customerName = (order.CustomerEmail || 'Customer').split('@')[0];
+          whatsappService.sendTemplateMessage({
+            phone: order.CustomerPhone,
+            templateName: 'payment_verified',
+            params: [customerName, orderRef],
+            orderId: order.OrderId
+          }).catch(err => logger.error('WhatsApp payment verification confirm webhook error:', err));
+        }
       } catch (err) {
         try {
           await transaction.rollback();

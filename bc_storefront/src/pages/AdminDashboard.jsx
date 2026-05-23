@@ -4,7 +4,7 @@ import {
   ShieldAlert, BarChart3, AlertCircle, HelpCircle, Mail, Settings, 
   DollarSign, LogOut, Package, RefreshCw, Layers, Check, X, 
   ArrowRight, UserPlus, Sliders, AlertTriangle, Play, FileText, Send,
-  MapPin, Target, Megaphone
+  MapPin, Target, Megaphone, MessageCircle
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -254,6 +254,88 @@ export default function AdminDashboard({ currentUser }) {
     suggestionId: null,
     notes: ''
   });
+
+  // WhatsApp CRM state variables
+  const [whatsappContacts, setWhatsappContacts] = useState([]);
+  const [selectedContact, setSelectedContact] = useState(null);
+  const [whatsappHistory, setWhatsappHistory] = useState([]);
+  const [whatsappTemplates, setWhatsappTemplates] = useState([]);
+  const [whatsappWebhooks, setWhatsappWebhooks] = useState([]);
+  const [whatsappLoading, setWhatsappLoading] = useState(false);
+  const [selectedTemplateName, setSelectedTemplateName] = useState('order_confirmation');
+  const [manualTemplatePhone, setManualTemplatePhone] = useState('');
+  const [manualTemplateParams, setManualTemplateParams] = useState(['', '', '']);
+  const [manualTemplateOrderId, setManualTemplateOrderId] = useState('');
+
+  const fetchWhatsAppData = async () => {
+    try {
+      setWhatsappLoading(true);
+      const [contactsData, templatesData, webhooksData] = await Promise.all([
+        api.get('/api/admin/whatsapp/contacts').catch(() => ({ items: [] })),
+        api.get('/api/admin/whatsapp/templates').catch(() => ({ items: [] })),
+        api.get('/api/admin/whatsapp/webhook-events').catch(() => ({ items: [] }))
+      ]);
+      setWhatsappContacts(contactsData.items || []);
+      setWhatsappTemplates(templatesData.items || []);
+      setWhatsappWebhooks(webhooksData.items || []);
+      
+      // Auto-select contact if none selected
+      if (contactsData.items && contactsData.items.length > 0 && !selectedContact) {
+        handleSelectContact(contactsData.items[0]);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to load WhatsApp CRM datasets');
+    } finally {
+      setWhatsappLoading(false);
+    }
+  };
+
+  const handleSelectContact = async (contact) => {
+    setSelectedContact(contact);
+    setManualTemplatePhone(contact.phone);
+    try {
+      const data = await api.get(`/api/admin/whatsapp/contacts/${contact.phone}/messages`);
+      setWhatsappHistory(data.items || []);
+    } catch (err) {
+      setWhatsappHistory([]);
+      setError(err.message || `Failed to sync chat history for ${contact.phone}`);
+    }
+  };
+
+  const handleSendManualTemplate = async (e) => {
+    e.preventDefault();
+    if (!manualTemplatePhone) return;
+    try {
+      setWhatsappLoading(true);
+      const cleanParams = manualTemplateParams.filter(p => p !== undefined && p !== null);
+      const res = await api.post('/api/admin/whatsapp/send-template', {
+        phone: manualTemplatePhone,
+        templateName: selectedTemplateName,
+        params: cleanParams,
+        orderId: manualTemplateOrderId ? Number(manualTemplateOrderId) : null
+      });
+      
+      if (res.success) {
+        showToast(`Template ${selectedTemplateName} sent successfully!`);
+        // Reset manual forms
+        setManualTemplateOrderId('');
+        setManualTemplateParams(['', '', '']);
+        
+        // Refresh contact history
+        await fetchWhatsAppData();
+        if (selectedContact) {
+          await handleSelectContact(selectedContact);
+        }
+      } else {
+        setError(res.result?.error || 'Failed to send template message');
+      }
+    } catch (err) {
+      setError(err.message || 'Error occurred while dispatching manual template');
+    } finally {
+      setWhatsappLoading(false);
+    }
+  };
 
   // Fetch all dashboard data
   const fetchAllData = async () => {
@@ -792,6 +874,16 @@ export default function AdminDashboard({ currentUser }) {
               >
                 <BarChart3 size={18} />
                 Ads Command
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => { setActiveTab('whatsapp'); fetchWhatsAppData(); }} 
+                className={`sidebar-link w-full text-left ${activeTab === 'whatsapp' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <MessageCircle size={18} />
+                WhatsApp CRM
               </button>
             </li>
           </ul>
@@ -2901,6 +2993,387 @@ export default function AdminDashboard({ currentUser }) {
                       </table>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* TAB 10: WHATSAPP CRM */}
+              {activeTab === 'whatsapp' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 340px', gap: '24px', height: 'calc(100vh - 240px)', minHeight: '650px' }} className="tab-animation">
+                  
+                  {/* Left Column: Contacts list */}
+                  <div className="glass-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <MessageCircle size={18} style={{ color: 'hsl(var(--primary))' }} />
+                        Conversations
+                      </h3>
+                      <button onClick={fetchWhatsAppData} className="btn-secondary" style={{ padding: '6px', borderRadius: '6px' }} title="Sync contacts">
+                        <RefreshCw size={12} className={whatsappLoading ? 'spin-anim' : ''} />
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', flex: 1 }} className="custom-scrollbar">
+                      {whatsappContacts.length === 0 ? (
+                        <div style={{ padding: '40px 10px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontSize: '0.85rem' }}>
+                          No active WhatsApp threads registered yet.
+                        </div>
+                      ) : (
+                        whatsappContacts.map(c => {
+                          const isSelected = selectedContact?.contactId === c.contactId;
+                          return (
+                            <button
+                              key={c.contactId}
+                              onClick={() => handleSelectContact(c)}
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '6px',
+                                width: '100%',
+                                padding: '12px 14px',
+                                borderRadius: '12px',
+                                border: isSelected ? '1px solid hsl(var(--primary) / 0.3)' : '1px solid rgba(255,255,255,0.04)',
+                                background: isSelected ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.01)',
+                                color: '#fff',
+                                textAlign: 'left',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                                <span style={{ fontWeight: '700', fontSize: '0.88rem' }}>{c.name || c.phone}</span>
+                                <span style={{ fontSize: '0.68rem', color: 'hsl(var(--text-muted))' }}>
+                                  {c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%' }}>
+                                {c.lastMessage || 'Template notification sent'}
+                              </span>
+                              {c.lastMessageStatus && (
+                                <span style={{
+                                  fontSize: '0.65rem',
+                                  color: c.lastMessageStatus === 'SKIPPED_CONFIG_MISSING' ? '#fbbc05' : c.lastMessageStatus === 'FAILED' ? '#ea4335' : '#34a853',
+                                  alignSelf: 'flex-end',
+                                  fontWeight: '800'
+                                }}>
+                                  {c.lastMessageStatus}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Center Column: Live Chat Messenger */}
+                  <div className="glass-card" style={{ padding: '0', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+                    {selectedContact ? (
+                      <>
+                        {/* Chat Header */}
+                        <div style={{ padding: '18px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <h4 style={{ fontWeight: '700', color: '#fff', fontSize: '1rem' }}>{selectedContact.name || selectedContact.phone}</h4>
+                            <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', fontFamily: 'monospace' }}>{selectedContact.phone}</span>
+                          </div>
+                          <span style={{
+                            fontSize: '0.7rem',
+                            background: selectedContact.optedIn ? 'rgba(52,168,83,0.1)' : 'rgba(234,67,53,0.1)',
+                            color: selectedContact.optedIn ? '#34a853' : '#ea4335',
+                            padding: '3px 8px',
+                            borderRadius: '30px',
+                            border: '1px solid rgba(52,168,83,0.2)',
+                            fontWeight: '800'
+                          }}>
+                            {selectedContact.optedIn ? 'Opted In' : 'Opted Out'}
+                          </span>
+                        </div>
+
+                        {/* Messages Thread Container */}
+                        <div style={{ padding: '24px', flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }} className="custom-scrollbar">
+                          {whatsappHistory.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '60px 20px', color: 'hsl(var(--text-muted))', fontSize: '0.85rem' }}>
+                              No messages recorded for this number.
+                            </div>
+                          ) : (
+                            whatsappHistory.map(m => {
+                              const isSent = m.direction === 'SENT';
+                              return (
+                                <div
+                                  key={m.messageId}
+                                  style={{
+                                    alignSelf: isSent ? 'flex-end' : 'flex-start',
+                                    maxWidth: '75%',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '4px'
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      background: isSent ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                                      border: isSent ? '1px solid rgba(59, 130, 246, 0.25)' : '1px solid rgba(255,255,255,0.06)',
+                                      padding: '12px 16px',
+                                      borderRadius: isSent ? '16px 16px 2px 16px' : '16px 16px 16px 2px',
+                                      color: '#fff',
+                                      fontSize: '0.88rem',
+                                      lineHeight: '1.45'
+                                    }}
+                                  >
+                                    {m.bodyText}
+                                  </div>
+                                  
+                                  <div style={{ display: 'flex', gap: '8px', justifyContent: isSent ? 'flex-end' : 'flex-start', alignItems: 'center' }}>
+                                    {m.templateName && (
+                                      <span style={{ fontSize: '0.65rem', background: 'rgba(255,255,255,0.04)', padding: '1px 5px', borderRadius: '4px', color: 'hsl(var(--primary))' }}>
+                                        Template: {m.templateName}
+                                      </span>
+                                    )}
+                                    {m.orderRef && (
+                                      <span style={{ fontSize: '0.65rem', background: 'rgba(255,255,255,0.04)', padding: '1px 5px', borderRadius: '4px', color: '#fbbc05' }}>
+                                        Order: {m.orderRef}
+                                      </span>
+                                    )}
+                                    <span style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))' }}>
+                                      {new Date(m.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                    {isSent && (
+                                      <span style={{
+                                        fontSize: '0.65rem',
+                                        color: m.deliveryStatus === 'SKIPPED_CONFIG_MISSING' ? '#fbbc05' : m.deliveryStatus === 'FAILED' ? '#ea4335' : '#34a853',
+                                        fontWeight: '800'
+                                      }}>
+                                        ({m.deliveryStatus})
+                                      </span>
+                                    )}
+                                  </div>
+                                  {m.errorMessage && (
+                                    <span style={{ fontSize: '0.65rem', color: '#ea4335', alignSelf: 'flex-end', fontStyle: 'italic' }}>
+                                      Error: {m.errorMessage}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px', color: 'hsl(var(--text-muted))' }}>
+                        <MessageCircle size={48} style={{ opacity: 0.3 }} />
+                        <span>Select a customer conversation thread from the sidebar</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Column: Template controls & dynamic console */}
+                  <div className="glass-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', overflowY: 'auto' }}>
+                    <div>
+                      <h4 style={{ fontWeight: '700', fontSize: '1rem', color: '#fff', marginBottom: '4px' }}>CRM Notification Engine</h4>
+                      <p style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>Send transactional templates manually to target number</p>
+                    </div>
+
+                    <form onSubmit={handleSendManualTemplate} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '600' }}>Target Phone Number</label>
+                        <input
+                          type="text"
+                          value={manualTemplatePhone}
+                          onChange={(e) => setManualTemplatePhone(e.target.value)}
+                          className="styled-input"
+                          placeholder="+88017XXXXXXXX"
+                          required
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '600' }}>Template Type</label>
+                        <select
+                          value={selectedTemplateName}
+                          onChange={(e) => {
+                            setSelectedTemplateName(e.target.value);
+                            setManualTemplateParams(['', '', '']);
+                          }}
+                          className="styled-input"
+                        >
+                          {whatsappTemplates.map(t => (
+                            <option key={t.templateName} value={t.templateName}>{t.templateName}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '600' }}>Related Order ID (Optional)</label>
+                        <input
+                          type="number"
+                          value={manualTemplateOrderId}
+                          onChange={(e) => setManualTemplateOrderId(e.target.value)}
+                          className="styled-input"
+                          placeholder="e.g. 104"
+                        />
+                      </div>
+
+                      {/* Display Template Body Text Preview */}
+                      <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
+                        <strong style={{ display: 'block', marginBottom: '4px', color: 'hsl(var(--primary))' }}>Raw Template Structure:</strong>
+                        {whatsappTemplates.find(t => t.templateName === selectedTemplateName)?.bodyPattern || 'Select template'}
+                      </div>
+
+                      {/* Template parameter inputs based on name */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '600' }}>Template Variables</label>
+                        
+                        {selectedTemplateName === 'order_confirmation' && (
+                          <>
+                            <input
+                              type="text"
+                              value={manualTemplateParams[0]}
+                              onChange={(e) => setManualTemplateParams([e.target.value, manualTemplateParams[1], manualTemplateParams[2]])}
+                              className="styled-input"
+                              placeholder="Param 1: Customer Name"
+                              required
+                            />
+                            <input
+                              type="text"
+                              value={manualTemplateParams[1]}
+                              onChange={(e) => setManualTemplateParams([manualTemplateParams[0], e.target.value, manualTemplateParams[2]])}
+                              className="styled-input"
+                              placeholder="Param 2: Order Reference (e.g. BC-ORD-123)"
+                              required
+                            />
+                            <input
+                              type="text"
+                              value={manualTemplateParams[2]}
+                              onChange={(e) => setManualTemplateParams([manualTemplateParams[0], manualTemplateParams[1], e.target.value])}
+                              className="styled-input"
+                              placeholder="Param 3: Total Amount (e.g. 849.00)"
+                              required
+                            />
+                          </>
+                        )}
+
+                        {selectedTemplateName === 'payment_reminder' && (
+                          <>
+                            <input
+                              type="text"
+                              value={manualTemplateParams[0]}
+                              onChange={(e) => setManualTemplateParams([e.target.value, manualTemplateParams[1], ''])}
+                              className="styled-input"
+                              placeholder="Param 1: Customer Name"
+                              required
+                            />
+                            <input
+                              type="text"
+                              value={manualTemplateParams[1]}
+                              onChange={(e) => setManualTemplateParams([manualTemplateParams[0], e.target.value, ''])}
+                              className="styled-input"
+                              placeholder="Param 2: Order Reference"
+                              required
+                            />
+                          </>
+                        )}
+
+                        {selectedTemplateName === 'payment_verified' && (
+                          <>
+                            <input
+                              type="text"
+                              value={manualTemplateParams[0]}
+                              onChange={(e) => setManualTemplateParams([e.target.value, manualTemplateParams[1], ''])}
+                              className="styled-input"
+                              placeholder="Param 1: Customer Name"
+                              required
+                            />
+                            <input
+                              type="text"
+                              value={manualTemplateParams[1]}
+                              onChange={(e) => setManualTemplateParams([manualTemplateParams[0], e.target.value, ''])}
+                              className="styled-input"
+                              placeholder="Param 2: Order Reference"
+                              required
+                            />
+                          </>
+                        )}
+
+                        {selectedTemplateName === 'delivery_update' && (
+                          <>
+                            <input
+                              type="text"
+                              value={manualTemplateParams[0]}
+                              onChange={(e) => setManualTemplateParams([e.target.value, manualTemplateParams[1], ''])}
+                              className="styled-input"
+                              placeholder="Param 1: Customer Name"
+                              required
+                            />
+                            <input
+                              type="text"
+                              value={manualTemplateParams[1]}
+                              onChange={(e) => setManualTemplateParams([manualTemplateParams[0], e.target.value, ''])}
+                              className="styled-input"
+                              placeholder="Param 2: Order Reference"
+                              required
+                            />
+                          </>
+                        )}
+
+                        {selectedTemplateName === 'review_request' && (
+                          <>
+                            <input
+                              type="text"
+                              value={manualTemplateParams[0]}
+                              onChange={(e) => setManualTemplateParams([e.target.value, manualTemplateParams[1], ''])}
+                              className="styled-input"
+                              placeholder="Param 1: Customer Name"
+                              required
+                            />
+                            <input
+                              type="text"
+                              value={manualTemplateParams[1]}
+                              onChange={(e) => setManualTemplateParams([manualTemplateParams[0], e.target.value, ''])}
+                              className="styled-input"
+                              placeholder="Param 2: Order Reference"
+                              required
+                            />
+                          </>
+                        )}
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={whatsappLoading}
+                        className="btn-primary"
+                        style={{ width: '100%', padding: '12px', borderRadius: '10px', cursor: 'pointer', display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '10px' }}
+                      >
+                        {whatsappLoading ? (
+                          <span className="spin-anim" style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.2)', borderTopColor: '#fff', borderRadius: '50%' }} />
+                        ) : <Send size={14} />}
+                        {whatsappLoading ? 'Sending...' : 'Dispatch Template Message'}
+                      </button>
+                    </form>
+
+                    {/* Diagnostics & Webhook receipts list */}
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '20px', marginTop: '10px' }}>
+                      <h5 style={{ fontWeight: '700', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'hsl(var(--text-muted))', marginBottom: '8px' }}>
+                        Webhook Events Logs
+                      </h5>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }} className="custom-scrollbar">
+                        {whatsappWebhooks.length === 0 ? (
+                          <span style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'hsl(var(--text-muted))' }}>No webhooks registered</span>
+                        ) : (
+                          whatsappWebhooks.map(wh => (
+                            <div key={wh.eventId} style={{ padding: '8px 10px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '6px', fontSize: '0.7rem', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700' }}>
+                                <span style={{ color: 'hsl(var(--primary))' }}>{wh.eventType}</span>
+                                <span style={{ color: 'hsl(var(--text-muted))' }}>{new Date(wh.createdAt).toLocaleTimeString()}</span>
+                              </div>
+                              <span style={{ color: 'hsl(var(--text-secondary))', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                Ref: {wh.eventRef}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
               )}
 
