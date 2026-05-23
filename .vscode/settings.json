@@ -1,0 +1,14 @@
+{
+  "cSpell.words": [
+    "recordset",
+    "SYSUTCDATETIME",
+    "txns",
+    "mssql",
+    "nvarchar",
+    "datetime",
+    "upsert",
+    "outbox",
+    "webhook",
+    "bkash"
+  ]
+}
