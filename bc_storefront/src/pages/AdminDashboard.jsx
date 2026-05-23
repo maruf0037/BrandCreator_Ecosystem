@@ -203,6 +203,8 @@ export default function AdminDashboard({ currentUser }) {
   const [profitLedgerSummary, setProfitLedgerSummary] = useState(null);
   const [profitLedgerItems, setProfitLedgerItems] = useState([]);
   const [walletSummary, setWalletSummary] = useState(null);
+  const [walletAuditReport, setWalletAuditReport] = useState(null);
+  const [walletHistory, setWalletHistory] = useState([]);
   const [topUpForm, setTopUpForm] = useState({
     txnType: 'ADMIN_TOP_UP',
     amount: '',
@@ -364,7 +366,9 @@ export default function AdminDashboard({ currentUser }) {
         pricingProductData,
         profitLedgerData,
         campaignData,
-        walletData
+        walletData,
+        walletAuditData,
+        walletHistoryData
       ] = await Promise.all([
         api.get('/api/products').catch((err) => { pErrs.products = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/api/inventory/transfers').catch((err) => { pErrs.transfers = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
@@ -378,7 +382,9 @@ export default function AdminDashboard({ currentUser }) {
         api.get('/api/admin/pricing/products').catch((err) => { pErrs.pricing = err.message || 'Failed to load admin pricing products'; return { items: [] }; }),
         api.get('/api/admin/profit-ledger').catch((err) => { pErrs.profitLedger = err.message || 'Failed to load profit ledger'; return { items: [], summary: null }; }),
         api.get('/api/admin/campaigns').catch((err) => { pErrs.campaigns = err.message || 'Failed to load campaigns'; return { items: [] }; }),
-        api.get('/api/admin/wallet/summary').catch((err) => { pErrs.wallet = err.message || 'Failed to load wallet'; return null; })
+        api.get('/api/admin/wallet/summary').catch((err) => { pErrs.wallet = err.message || 'Failed to load wallet'; return null; }),
+        api.get('/api/admin/wallet/audit-report').catch((err) => { pErrs.walletAudit = err.message || 'Failed to load wallet audit report'; return null; }),
+        api.get('/api/admin/wallet/history').catch((err) => { pErrs.walletHistory = err.message || 'Failed to load wallet history'; return { items: [] }; })
       ]);
 
       setPanelErrors(pErrs);
@@ -396,6 +402,8 @@ export default function AdminDashboard({ currentUser }) {
       setProfitLedgerItems(profitLedgerData.items || []);
       setCampaigns(campaignData.items || []);
       setWalletSummary(walletData || null);
+      setWalletAuditReport(walletAuditData || null);
+      setWalletHistory(walletHistoryData?.items || []);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Failed to fetch platform dashboard data');
@@ -1832,6 +1840,39 @@ export default function AdminDashboard({ currentUser }) {
                         Release Matured Profits
                       </button>
                     </div>
+
+                    {walletAuditReport?.maturationForecast && (
+                      <div style={{ marginBottom: '28px', background: 'rgba(13, 17, 24, 0.3)', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '16px', padding: '20px' }}>
+                        <h4 style={{ margin: '0 0 14px', fontSize: '0.9rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          <RefreshCw size={14} style={{ color: 'hsl(var(--primary))' }} />
+                          7-Day Dynamic Cash Flow Maturation Calendar
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '10px' }}>
+                          {walletAuditReport.maturationForecast.map((day) => (
+                            <div key={day.date} style={{
+                              padding: '10px',
+                              textAlign: 'center',
+                              borderRadius: '10px',
+                              border: '1px solid rgba(255,255,255,0.05)',
+                              background: day.amount > 0 ? 'rgba(52, 168, 83, 0.04)' : 'rgba(255,255,255,0.01)'
+                            }}>
+                              <div style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', textTransform: 'uppercase', fontWeight: '800' }}>
+                                {day.dayName}
+                              </div>
+                              <div style={{ fontSize: '0.6rem', color: 'hsl(var(--text-muted))', marginTop: '1px' }}>
+                                {day.date.substring(5)}
+                              </div>
+                              <div style={{ fontSize: '0.925rem', color: day.amount > 0 ? '#34a853' : '#fff', fontWeight: '900', margin: '4px 0 2px' }}>
+                                ৳{day.amount.toFixed(0)}
+                              </div>
+                              <div style={{ fontSize: '0.6rem', color: 'hsl(var(--text-muted))' }}>
+                                {day.ordersCount} {day.ordersCount === 1 ? 'order' : 'orders'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
                       {[
                         ['Supplier Locked', walletSummary?.supplierPayableLocked || 0, 'Protected supplier liability wallet'],
@@ -2105,12 +2146,18 @@ export default function AdminDashboard({ currentUser }) {
                               type="number"
                               required
                               min="1"
+                              max="1000000"
                               step="0.01"
                               placeholder="0.00"
                               value={topUpForm.amount}
                               onChange={(e) => setTopUpForm(prev => ({ ...prev, amount: e.target.value }))}
                               className="styled-input"
                             />
+                            {Number(topUpForm.amount) > 1000000 && (
+                              <span style={{ color: '#ea4335', fontSize: '0.75rem', fontWeight: '700', marginTop: '4px' }}>
+                                ⚠️ Warning: Maximum top-up is BDT 1,000,000. Larger values will be blocked.
+                              </span>
+                            )}
                           </label>
                           <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             <span style={{ fontSize: '0.74rem', fontWeight: '850', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase' }}>Notes</span>
@@ -2124,7 +2171,7 @@ export default function AdminDashboard({ currentUser }) {
                           </label>
                           <button
                             type="submit"
-                            disabled={topUpLoading}
+                            disabled={topUpLoading || Number(topUpForm.amount) > 1000000}
                             className="btn-primary"
                             style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '12px' }}
                           >
@@ -2154,7 +2201,69 @@ export default function AdminDashboard({ currentUser }) {
                     ))}
                   </div>
 
-                  <div style={{ marginTop: '24px' }} className="premium-table-container">
+                  {/* Unified Wallet History Audit Trail Table */}
+                  <div style={{ marginTop: '32px' }}>
+                    <h3 style={{ fontSize: '1.2rem', marginBottom: '16px', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FileText size={18} style={{ color: 'hsl(var(--primary))' }} />
+                      Unified Wallet Transaction & Profit Audit Trail
+                    </h3>
+                    <div className="premium-table-container" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                      <table className="premium-table">
+                        <thead>
+                          <tr>
+                            <th>Ref / ID</th>
+                            <th>Txn Type</th>
+                            <th>Flow</th>
+                            <th>Amount</th>
+                            <th>Initiator / Owner</th>
+                            <th>Notes</th>
+                            <th>Timestamp</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {walletHistory.length === 0 ? (
+                            <tr>
+                              <td colSpan="7" style={{ padding: '32px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
+                                No wallet audit trail entries found.
+                              </td>
+                            </tr>
+                          ) : (
+                            walletHistory.slice(0, 15).map((item) => (
+                              <tr key={item.id} className="interactive-row">
+                                <td style={{ fontWeight: '700', color: '#fff', fontFamily: 'monospace' }}>
+                                  {item.reference}
+                                </td>
+                                <td>
+                                  <span className="pill-badge pill-draft" style={{ fontWeight: '850' }}>
+                                    {item.txnType}
+                                  </span>
+                                </td>
+                                <td>
+                                  <span className={`pill-badge ${item.flowType === 'INFLOW' ? 'pill-approved' : 'pill-rejected'}`}>
+                                    {item.flowType}
+                                  </span>
+                                </td>
+                                <td style={{ fontWeight: '900', color: item.flowType === 'INFLOW' ? '#34a853' : '#ea4335' }}>
+                                  ৳{item.amount.toFixed(2)}
+                                </td>
+                                <td style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', fontFamily: 'monospace' }}>
+                                  {item.createdBy}
+                                </td>
+                                <td style={{ fontSize: '0.825rem', color: 'hsl(var(--text-secondary))' }}>
+                                  {item.notes}
+                                </td>
+                                <td style={{ fontSize: '0.78rem', color: 'hsl(var(--text-muted))' }}>
+                                  {new Date(item.timestamp).toLocaleString()}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '32px' }} className="premium-table-container">
                     <table className="premium-table">
                       <thead>
                         <tr>

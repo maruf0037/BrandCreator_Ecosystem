@@ -61,6 +61,8 @@ exports.getCampaigns = async (req, res) => {
 };
 
 // ─── POST /api/admin/campaigns/approve-test ───────────────────────────────────
+const approvalMutexes = {};
+
 exports.approveTestCampaign = async (req, res) => {
   const {
     productId,
@@ -80,6 +82,13 @@ exports.approveTestCampaign = async (req, res) => {
       message: 'productId, selectedLocation, and platform are required'
     });
   }
+
+  // Acquire concurrency lock to prevent double spend campaign approvals
+  const lockKey = `prod_${productId}`;
+  while (approvalMutexes[lockKey]) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  approvalMutexes[lockKey] = true;
 
   try {
     const pool = await poolPromise;
@@ -244,6 +253,8 @@ exports.approveTestCampaign = async (req, res) => {
 
   } catch (err) {
     return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  } finally {
+    approvalMutexes[lockKey] = false;
   }
 };
 

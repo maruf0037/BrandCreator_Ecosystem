@@ -14,6 +14,30 @@ exports.getWalletSummary = async (req, res) => {
   }
 };
 
+// GET /api/admin/wallet/audit-report
+exports.getWalletAuditReport = async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const report = await walletService.calculateWalletAuditReport(pool);
+    return res.json(report);
+  } catch (err) {
+    logger.error('Error fetching wallet audit report:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+
+// GET /api/admin/wallet/history
+exports.getWalletHistory = async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const history = await walletService.getUnifiedWalletHistory(pool);
+    return res.json({ items: history });
+  } catch (err) {
+    logger.error('Error fetching wallet history:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+
 // POST /api/admin/wallet/topup
 exports.postWalletTopUp = async (req, res) => {
   const { txnType, amount, notes, source } = req.body;
@@ -32,18 +56,28 @@ exports.postWalletTopUp = async (req, res) => {
     });
   }
 
+  // Strict BDT 1,000,000 top-up guardrail
+  if (parseFloat(amount) > 1000000) {
+    return res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: 'Transaction amount exceeds maximum limit of BDT 1,000,000.'
+    });
+  }
+
   try {
     const pool = await poolPromise;
     const finalSource = source || 'REAL';
+    const createdByEmail = req.user?.email || 'admin@brandcreator.com';
 
     await pool.request()
       .input('txnType', sql.NVarChar(50), txnType)
       .input('amount', sql.Decimal(18, 2), parseFloat(amount))
       .input('notes', sql.NVarChar(500), notes || null)
       .input('source', sql.NVarChar(100), finalSource)
+      .input('createdByEmail', sql.NVarChar(255), createdByEmail)
       .query(`
-        INSERT INTO dbo.WalletTransactions (TxnType, Amount, Notes, Source)
-        VALUES (@txnType, @amount, @notes, @source)
+        INSERT INTO dbo.WalletTransactions (TxnType, Amount, Notes, Source, CreatedByEmail)
+        VALUES (@txnType, @amount, @notes, @source, @createdByEmail)
       `);
 
     const updatedBalances = await walletService.calculateWalletBalances(pool);

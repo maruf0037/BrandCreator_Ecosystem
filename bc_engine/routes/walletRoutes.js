@@ -31,6 +31,8 @@ const requireRole = (allowedRoles) => {
 
 // Admin / SuperAdmin only management routes
 router.get('/admin/wallet/summary', requireRole(['Admin', 'SuperAdmin']), walletController.getWalletSummary);
+router.get('/admin/wallet/audit-report', requireRole(['Admin', 'SuperAdmin']), walletController.getWalletAuditReport);
+router.get('/admin/wallet/history', requireRole(['Admin', 'SuperAdmin']), walletController.getWalletHistory);
 router.post('/admin/wallet/topup', requireRole(['Admin', 'SuperAdmin']), walletController.postWalletTopUp);
 router.post('/admin/wallet/release-matured-profit', requireRole(['Admin', 'SuperAdmin']), walletController.postReleaseMaturedProfit);
 
