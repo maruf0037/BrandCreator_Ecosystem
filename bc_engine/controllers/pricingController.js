@@ -324,3 +324,132 @@ exports.getOrderProfitBreakdown = async (req, res) => {
     res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
   }
 };
+
+// POST /api/admin/pricing/products/:productId/auto-recommend
+exports.getAutoPriceRecommendation = async (req, res) => {
+  const { productId } = req.params;
+  const {
+    deliveryOpsCost = 60,
+    paymentFee = 15,
+    riskBuffer = 25,
+    minimumProfitMargin = 0.15
+  } = req.body || {};
+
+  try {
+    const pool = await poolPromise;
+
+    // 1. Fetch product (supplier RPU/MRP or BasePrice)
+    const productRes = await pool.request()
+      .input('productId', sql.Int, productId)
+      .query(`
+        SELECT TOP 1
+          p.ProductId, p.ProductName, p.SKU, p.Category,
+          p.RPU_MRP, p.BasePrice, p.SuggestedRetailPrice
+        FROM dbo.Products p
+        WHERE p.ProductId = @productId
+      `);
+
+    if (productRes.recordset.length === 0) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Product not found' });
+    }
+
+    const product = productRes.recordset[0];
+    const supplierCost = (product.RPU_MRP !== null && parseFloat(product.RPU_MRP) > 0)
+      ? parseFloat(product.RPU_MRP)
+      : (product.BasePrice !== null ? parseFloat(product.BasePrice) : 0);
+
+    // 2. Fetch latest location suggestion for this product
+    const suggestionRes = await pool.request()
+      .input('productId', sql.Int, productId)
+      .query(`
+        SELECT TOP 1 BudgetSuggestionJson, ExpectedResultJson, TestedLocation
+        FROM dbo.ProductLocationSuggestions
+        WHERE ProductId = @productId
+        ORDER BY CreatedAt DESC
+      `);
+
+    let adsCostPerUnit = 80; // fallback default
+    let testedLocation = null;
+    let needsLocationSync = false;
+
+    if (suggestionRes.recordset.length === 0) {
+      needsLocationSync = true;
+    } else {
+      const row = suggestionRes.recordset[0];
+      testedLocation = row.TestedLocation;
+
+      let budgetSuggestion = {};
+      let expectedResult = {};
+
+      try { budgetSuggestion = JSON.parse(row.BudgetSuggestionJson || '{}'); } catch (_) { budgetSuggestion = {}; }
+      try { expectedResult = JSON.parse(row.ExpectedResultJson || '{}'); } catch (_) { expectedResult = {}; }
+
+      const dailyBudgetMin = parseFloat(budgetSuggestion.suggestedDailyBudgetMin || 500);
+      const testDays = parseInt(budgetSuggestion.testDays || 2, 10);
+      const totalBudgetMin = dailyBudgetMin * testDays;
+
+      // Parse expectedOrderRange conservatively: "1-5" → use 1
+      const orderRange = String(expectedResult.expectedOrderRange || '1');
+      const expectedMinOrders = Math.max(1, parseInt(orderRange.split('-')[0], 10));
+
+      adsCostPerUnit = Math.round(totalBudgetMin / expectedMinOrders);
+    }
+
+    // 3. Calculate totals
+    const delivery = parseFloat(deliveryOpsCost);
+    const fee = parseFloat(paymentFee);
+    const buffer = parseFloat(riskBuffer);
+    const margin = Math.min(Math.max(parseFloat(minimumProfitMargin), 0.01), 0.99);
+
+    const totalCost = supplierCost + adsCostPerUnit + delivery + fee + buffer;
+    const minimumSafePrice = Math.ceil(totalCost / (1 - margin));
+    const recommendedSellingPrice = Math.ceil(minimumSafePrice * 1.06); // 6% above minimum
+    const expectedProfitPerUnit = recommendedSellingPrice - totalCost;
+    const expectedMarginPct = parseFloat(((expectedProfitPerUnit / recommendedSellingPrice) * 100).toFixed(1));
+
+    // 4. Status + warning
+    let status = 'PROFIT_GOOD';
+    let warning = null;
+
+    if (needsLocationSync) {
+      status = 'NEED_LOCATION_SYNC';
+      warning = 'No location suggestion found. Run Location Ads Sync first for accurate ads cost estimate. Using BDT 80 fallback.';
+    } else if (expectedMarginPct < 0) {
+      status = 'LOSS_RISK';
+      warning = 'LOSS RISK: Selling price is below total cost. Adjust inputs or reduce costs.';
+    } else if (expectedMarginPct < 10) {
+      status = 'PRICE_BELOW_SAFE';
+      warning = 'PRICE BELOW SAFE PROFIT: Margin is below 10%. Strongly consider a higher selling price.';
+    } else if (expectedMarginPct < 15) {
+      status = 'LOW_MARGIN';
+      warning = 'LOW MARGIN: Margin is below 15% minimum target. Admin override is risky.';
+    }
+
+    return res.json({
+      productId: product.ProductId,
+      productName: product.ProductName,
+      sku: product.SKU,
+      testedLocation: testedLocation || 'No location synced',
+      supplierRpu: supplierCost,
+      adsCostPerUnit,
+      deliveryOpsCost: delivery,
+      paymentFee: fee,
+      riskBuffer: buffer,
+      totalCost,
+      marginTarget: margin,
+      minimumSafePrice,
+      recommendedSellingPrice,
+      expectedProfitPerUnit,
+      expectedMarginPct,
+      status,
+      warning,
+      needsLocationSync,
+      breakdownNote: needsLocationSync
+        ? 'Ads cost is estimated fallback (BDT 80). Sync a location for accurate calculation.'
+        : `Based on latest location suggestion for ${testedLocation}.`
+    });
+
+  } catch (err) {
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};

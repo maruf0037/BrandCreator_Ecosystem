@@ -231,6 +231,16 @@ export default function AdminDashboard({ currentUser }) {
     discountAmount: ''
   });
 
+  // Auto Price Recommendation state
+  const [autoRecommendLoading, setAutoRecommendLoading] = useState(false);
+  const [autoRecommendResult, setAutoRecommendResult] = useState(null);
+  const [autoRecommendInputs, setAutoRecommendInputs] = useState({
+    deliveryOpsCost: 60,
+    paymentFee: 15,
+    riskBuffer: 25,
+    minimumProfitMargin: 15
+  });
+
   // Fetch all dashboard data
   const fetchAllData = async () => {
     setLoading(true);
@@ -480,6 +490,41 @@ export default function AdminDashboard({ currentUser }) {
     } finally {
       setPricingSaving(false);
     }
+  };
+
+  const handleAutoRecommend = async (e) => {
+    e.preventDefault();
+    if (!selectedAdsProductId) {
+      setError('Select a product first to run auto price recommendation.');
+      return;
+    }
+    try {
+      setAutoRecommendLoading(true);
+      setAutoRecommendResult(null);
+      const data = await api.post(`/api/admin/pricing/products/${selectedAdsProductId}/auto-recommend`, {
+        deliveryOpsCost: Number(autoRecommendInputs.deliveryOpsCost),
+        paymentFee: Number(autoRecommendInputs.paymentFee),
+        riskBuffer: Number(autoRecommendInputs.riskBuffer),
+        minimumProfitMargin: Number(autoRecommendInputs.minimumProfitMargin) / 100
+      });
+      setAutoRecommendResult(data);
+      showToast(`Auto price calculated: BDT ${data.recommendedSellingPrice} recommended`);
+    } catch (err) {
+      setError(err.message || 'Failed to calculate auto price recommendation');
+    } finally {
+      setAutoRecommendLoading(false);
+    }
+  };
+
+  const handleApplyAutoRecommend = () => {
+    if (!autoRecommendResult) return;
+    setPricingForm((prev) => ({
+      ...prev,
+      adminSellingPrice: String(autoRecommendResult.recommendedSellingPrice),
+      adBudgetPlanned: String(autoRecommendResult.adsCostPerUnit),
+      deliveryOpsCost: String(autoRecommendResult.deliveryOpsCost)
+    }));
+    showToast('Auto recommendation applied to pricing form. Review and Save Plan manually.');
   };
 
   return (
@@ -1822,6 +1867,181 @@ export default function AdminDashboard({ currentUser }) {
                       </table>
                     </div>
                   )}
+
+                   {/* AUTO PRICE RECOMMENDATION PANEL */}
+                   <div style={{ marginTop: '32px' }}>
+                     <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                       <div style={{
+                         width: '40px', height: '40px', borderRadius: '12px', background: 'rgba(251, 188, 5, 0.12)',
+                         border: '1px solid rgba(251, 188, 5, 0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fbbc05'
+                       }}>
+                         <DollarSign size={20} />
+                       </div>
+                       <div>
+                         <h3 style={{ margin: 0, fontSize: '1.12rem' }}>Auto Price Recommendation Engine</h3>
+                         <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                           Supplier RPU + Ads cost + Ops cost → minimum safe selling price at 15% profit protection.
+                         </p>
+                       </div>
+                     </div>
+
+                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 0.85fr) minmax(400px, 1.15fr)', gap: '24px', alignItems: 'start' }}>
+
+                       {/* INPUT PANEL */}
+                       <form onSubmit={handleAutoRecommend} className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                         <div style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.82rem', lineHeight: 1.6 }}>
+                           Adjust cost inputs below. System will pull supplier RPU automatically from selected product + latest location ads suggestion.
+                         </div>
+
+                         {([
+                           ['Delivery / Ops Cost (BDT)', 'deliveryOpsCost'],
+                           ['Payment Gateway Fee (BDT)', 'paymentFee'],
+                           ['Return / Risk Buffer (BDT)', 'riskBuffer'],
+                           ['Minimum Profit Margin (%)', 'minimumProfitMargin']
+                         ]).map(([label, key]) => (
+                           <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                             <span style={{ fontSize: '0.74rem', fontWeight: '800', color: 'hsl(var(--text-muted))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                               {label}
+                             </span>
+                             <input
+                               type="number"
+                               min="0"
+                               step={key === 'minimumProfitMargin' ? '1' : '1'}
+                               value={autoRecommendInputs[key]}
+                               onChange={(e) => setAutoRecommendInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+                               className="styled-input"
+                               placeholder={key === 'minimumProfitMargin' ? '15' : '0'}
+                             />
+                           </label>
+                         ))}
+
+                         <button
+                           type="submit"
+                           disabled={autoRecommendLoading || !selectedAdsProductId}
+                           className="btn-primary"
+                           style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '13px 18px' }}
+                         >
+                           {autoRecommendLoading ? <RefreshCw size={16} className="spin-anim" /> : <BarChart3 size={16} />}
+                           {autoRecommendLoading ? 'Calculating...' : 'Calculate Safe Price'}
+                         </button>
+                       </form>
+
+                       {/* RESULT PANEL */}
+                       <div className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                         {!autoRecommendResult ? (
+                           <div style={{ textAlign: 'center', padding: '40px 20px', color: 'hsl(var(--text-muted))' }}>
+                             <DollarSign size={38} style={{ color: '#fbbc05', marginBottom: '12px' }} />
+                             <h3 style={{ color: '#fff', marginBottom: '8px' }}>No recommendation yet</h3>
+                             <p style={{ lineHeight: 1.6, maxWidth: '380px', margin: '0 auto' }}>
+                               Select a product and click Calculate to get the minimum safe selling price with 15% profit guarantee.
+                             </p>
+                           </div>
+                         ) : (
+                           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+                             {/* Status Header */}
+                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+                               <div>
+                                 <span className={`pill-badge ${
+                                   autoRecommendResult.status === 'PROFIT_GOOD' ? 'pill-approved' :
+                                   autoRecommendResult.status === 'LOW_MARGIN' ? 'pill-submitted' :
+                                   autoRecommendResult.status === 'NEED_LOCATION_SYNC' ? 'pill-pending' :
+                                   'pill-rejected'
+                                 }`}>
+                                   {autoRecommendResult.status === 'PROFIT_GOOD' ? '✅ PROFIT GOOD' :
+                                    autoRecommendResult.status === 'LOW_MARGIN' ? '⚠️ LOW MARGIN' :
+                                    autoRecommendResult.status === 'NEED_LOCATION_SYNC' ? '🔄 NEED LOCATION SYNC' :
+                                    autoRecommendResult.status === 'PRICE_BELOW_SAFE' ? '🚨 PRICE BELOW SAFE' :
+                                    '🔴 LOSS RISK'}
+                                 </span>
+                                 <h3 style={{ margin: '10px 0 4px', fontSize: '1.1rem' }}>{autoRecommendResult.productName}</h3>
+                                 <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.8rem' }}>
+                                   Based on: {autoRecommendResult.testedLocation} ads data
+                                 </div>
+                               </div>
+                               <div style={{ textAlign: 'right', minWidth: '110px' }}>
+                                 <div style={{ fontSize: '1.8rem', fontWeight: 950, color: '#34a853', lineHeight: 1 }}>
+                                   BDT {autoRecommendResult.recommendedSellingPrice}
+                                 </div>
+                                 <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', marginTop: '4px' }}>
+                                   Recommended Price
+                                 </div>
+                               </div>
+                             </div>
+
+                             {/* Warning */}
+                             {autoRecommendResult.warning && (
+                               <div style={{
+                                 padding: '12px 14px', borderRadius: '12px',
+                                 background: autoRecommendResult.status === 'PROFIT_GOOD' ? 'rgba(52,168,83,0.08)' : 'rgba(234, 67, 53, 0.08)',
+                                 border: `1px solid ${autoRecommendResult.status === 'PROFIT_GOOD' ? 'rgba(52,168,83,0.2)' : 'rgba(234,67,53,0.2)'}`,
+                                 color: autoRecommendResult.status === 'PROFIT_GOOD' ? '#34a853' : '#ea4335',
+                                 fontSize: '0.83rem', lineHeight: 1.5
+                               }}>
+                                 {autoRecommendResult.warning}
+                               </div>
+                             )}
+
+                             {/* Cost Breakdown Grid */}
+                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
+                               {[
+                                 ['Supplier RPU/MRP', autoRecommendResult.supplierRpu],
+                                 ['Ads Cost / Unit', autoRecommendResult.adsCostPerUnit],
+                                 ['Delivery / Ops', autoRecommendResult.deliveryOpsCost],
+                                 ['Payment Fee', autoRecommendResult.paymentFee],
+                                 ['Risk Buffer', autoRecommendResult.riskBuffer],
+                                 ['Total Cost', autoRecommendResult.totalCost]
+                               ].map(([label, val]) => (
+                                 <div key={label} style={{
+                                   padding: '12px 14px', borderRadius: '12px',
+                                   background: label === 'Total Cost' ? 'rgba(251,188,5,0.06)' : 'rgba(255,255,255,0.025)',
+                                   border: `1px solid ${label === 'Total Cost' ? 'rgba(251,188,5,0.2)' : 'rgba(255,255,255,0.05)'}`
+                                 }}>
+                                   <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase' }}>{label}</div>
+                                   <div style={{ color: label === 'Total Cost' ? '#fbbc05' : '#fff', fontWeight: 950, marginTop: '5px' }}>
+                                     BDT {Number(val || 0).toFixed(0)}
+                                   </div>
+                                 </div>
+                               ))}
+                             </div>
+
+                             {/* Result Summary */}
+                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                               <div style={{ padding: '14px', borderRadius: '14px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
+                                 <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase' }}>Min Safe Price</div>
+                                 <div style={{ color: 'hsl(var(--primary))', fontWeight: 950, fontSize: '1.2rem', marginTop: '6px' }}>BDT {autoRecommendResult.minimumSafePrice}</div>
+                               </div>
+                               <div style={{ padding: '14px', borderRadius: '14px', background: 'rgba(52,168,83,0.06)', border: '1px solid rgba(52,168,83,0.18)', textAlign: 'center' }}>
+                                 <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase' }}>Profit / Unit</div>
+                                 <div style={{ color: '#34a853', fontWeight: 950, fontSize: '1.2rem', marginTop: '6px' }}>BDT {autoRecommendResult.expectedProfitPerUnit}</div>
+                               </div>
+                               <div style={{ padding: '14px', borderRadius: '14px', background: 'rgba(52,168,83,0.06)', border: '1px solid rgba(52,168,83,0.18)', textAlign: 'center' }}>
+                                 <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase' }}>Margin %</div>
+                                 <div style={{ color: autoRecommendResult.expectedMarginPct >= 15 ? '#34a853' : '#fbbc05', fontWeight: 950, fontSize: '1.2rem', marginTop: '6px' }}>{autoRecommendResult.expectedMarginPct}%</div>
+                               </div>
+                             </div>
+
+                             {/* Note */}
+                             <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.8rem', fontStyle: 'italic', padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)' }}>
+                               {autoRecommendResult.breakdownNote}
+                             </div>
+
+                             {/* Apply to Form Button */}
+                             <button
+                               type="button"
+                               onClick={handleApplyAutoRecommend}
+                               className="btn-secondary"
+                               style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '12px 18px', borderColor: 'rgba(52,168,83,0.3)', color: '#34a853' }}
+                             >
+                               <ArrowRight size={16} />
+                               Apply to Pricing Form (then Save Plan manually)
+                             </button>
+                           </div>
+                         )}
+                       </div>
+                     </div>
+                   </div>
+
                 </div>
               )}
 
