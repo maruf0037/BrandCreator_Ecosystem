@@ -199,6 +199,9 @@ export default function AdminDashboard({ currentUser }) {
   const [transactions, setTransactions] = useState([]);
   const [systemHealth, setSystemHealth] = useState(null);
   const [locationProfiles, setLocationProfiles] = useState([]);
+  const [pricingProducts, setPricingProducts] = useState([]);
+  const [profitLedgerSummary, setProfitLedgerSummary] = useState(null);
+  const [profitLedgerItems, setProfitLedgerItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [panelErrors, setPanelErrors] = useState({});
@@ -219,6 +222,14 @@ export default function AdminDashboard({ currentUser }) {
   const [locationAdsResult, setLocationAdsResult] = useState(null);
   const [locationAdsHistory, setLocationAdsHistory] = useState([]);
   const [locationAdsLoading, setLocationAdsLoading] = useState(false);
+  const [pricingSaving, setPricingSaving] = useState(false);
+  const [pricingForm, setPricingForm] = useState({
+    adminSellingPrice: '',
+    adBudgetPlanned: '',
+    platformCommission: '',
+    deliveryOpsCost: '',
+    discountAmount: ''
+  });
 
   // Fetch all dashboard data
   const fetchAllData = async () => {
@@ -236,7 +247,9 @@ export default function AdminDashboard({ currentUser }) {
         orderData,
         transactionsData,
         healthData,
-        locationProfileData
+        locationProfileData,
+        pricingProductData,
+        profitLedgerData
       ] = await Promise.all([
         api.get('/api/products').catch((err) => { pErrs.products = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/api/inventory/transfers').catch((err) => { pErrs.transfers = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
@@ -246,7 +259,9 @@ export default function AdminDashboard({ currentUser }) {
         api.get('/api/orders').catch((err) => { pErrs.orders = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/api/inventory/transactions').catch((err) => { pErrs.ledgers = err.message || 'Access Denied / Failed to load'; return { items: [] }; }),
         api.get('/health/deep').catch((err) => { pErrs.systemHealth = err.message || 'Failed to load system health'; return null; }),
-        api.get('/api/admin/location-ads/profiles').catch((err) => { pErrs.locationAds = err.message || 'Failed to load location market profiles'; return { items: [] }; })
+        api.get('/api/admin/location-ads/profiles').catch((err) => { pErrs.locationAds = err.message || 'Failed to load location market profiles'; return { items: [] }; }),
+        api.get('/api/admin/pricing/products').catch((err) => { pErrs.pricing = err.message || 'Failed to load admin pricing products'; return { items: [] }; }),
+        api.get('/api/admin/profit-ledger').catch((err) => { pErrs.profitLedger = err.message || 'Failed to load profit ledger'; return { items: [], summary: null }; })
       ]);
 
       setPanelErrors(pErrs);
@@ -259,6 +274,9 @@ export default function AdminDashboard({ currentUser }) {
       setTransactions(transactionsData.items || []);
       setSystemHealth(healthData || null);
       setLocationProfiles(locationProfileData.items || []);
+      setPricingProducts(pricingProductData.items || []);
+      setProfitLedgerSummary(profitLedgerData.summary || null);
+      setProfitLedgerItems(profitLedgerData.items || []);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Failed to fetch platform dashboard data');
@@ -390,7 +408,79 @@ export default function AdminDashboard({ currentUser }) {
   };
 
   const selectedAdsProduct = products.find((product) => String(product.productId) === String(selectedAdsProductId));
+  const selectedPricingProduct = pricingProducts.find((product) => String(product.productId) === String(selectedAdsProductId));
   const activeLocationSuggestion = locationAdsResult || locationAdsHistory[0] || null;
+  const toNumber = (value) => Number.parseFloat(value || 0) || 0;
+  const supplierRpu = toNumber(selectedPricingProduct?.rpuMrp ?? selectedPricingProduct?.basePrice);
+  const adminSellingPrice = toNumber(pricingForm.adminSellingPrice);
+  const plannedAdsCost = toNumber(pricingForm.adBudgetPlanned);
+  const platformCommission = toNumber(pricingForm.platformCommission);
+  const deliveryOpsCost = toNumber(pricingForm.deliveryOpsCost);
+  const discountAmount = toNumber(pricingForm.discountAmount);
+  const projectedNetProfit = adminSellingPrice - supplierRpu - plannedAdsCost - deliveryOpsCost - discountAmount;
+  const projectedMarginPercent = adminSellingPrice > 0 ? ((projectedNetProfit / adminSellingPrice) * 100) : 0;
+  const sellAvailableForCommand = selectedAdsProduct
+    ? Math.max(0, Number(selectedAdsProduct.sellOnHand || 0) - Number(selectedAdsProduct.sellReserved || 0))
+    : 0;
+
+  const getProfitBadge = () => {
+    if (!selectedPricingProduct) return { label: 'SELECT PRODUCT', className: 'pill-draft' };
+    if (sellAvailableForCommand <= 0) return { label: 'NO SELL STOCK', className: 'pill-rejected' };
+    if (!activeLocationSuggestion) return { label: 'NEED LOCATION SYNC', className: 'pill-submitted' };
+    if (projectedNetProfit <= 0) return { label: 'LOSS RISK', className: 'pill-rejected' };
+    if (projectedMarginPercent < 15) return { label: 'LOW MARGIN', className: 'pill-submitted' };
+    return { label: 'PROFIT GOOD', className: 'pill-approved' };
+  };
+
+  const hydratePricingForm = (productId) => {
+    const product = pricingProducts.find((item) => String(item.productId) === String(productId));
+    const fallbackPrice = product?.adminSellingPrice || product?.suggestedRetailPrice || product?.rpuMrp || product?.basePrice || '';
+    setPricingForm({
+      adminSellingPrice: fallbackPrice ? String(fallbackPrice) : '',
+      adBudgetPlanned: product?.adBudgetPlanned ? String(product.adBudgetPlanned) : '',
+      platformCommission: product?.platformCommission ? String(product.platformCommission) : '',
+      deliveryOpsCost: product?.deliveryOpsCost ? String(product.deliveryOpsCost) : '',
+      discountAmount: product?.discountAmount ? String(product.discountAmount) : ''
+    });
+  };
+
+  const handleSelectAdsCommandProduct = (productId) => {
+    setSelectedAdsProductId(productId);
+    setLocationAdsResult(null);
+    hydratePricingForm(productId);
+    handleLoadLocationHistory(productId);
+  };
+
+  const handleSavePricingPlan = async (e) => {
+    e.preventDefault();
+    if (!selectedAdsProductId) {
+      setError('Select a product before saving admin pricing plan.');
+      return;
+    }
+    if (!pricingForm.adminSellingPrice) {
+      setError('Admin selling price is required before saving campaign pricing.');
+      return;
+    }
+
+    try {
+      setPricingSaving(true);
+      const data = await api.post(`/api/admin/pricing/products/${selectedAdsProductId}/plan`, {
+        adminSellingPrice: toNumber(pricingForm.adminSellingPrice),
+        adBudgetPlanned: toNumber(pricingForm.adBudgetPlanned),
+        platformCommission: toNumber(pricingForm.platformCommission),
+        deliveryOpsCost: toNumber(pricingForm.deliveryOpsCost),
+        discountAmount: toNumber(pricingForm.discountAmount)
+      });
+
+      showToast(data.warning || 'Admin pricing and campaign profit plan saved.');
+      await fetchAllData();
+      hydratePricingForm(selectedAdsProductId);
+    } catch (err) {
+      setError(err.message || 'Failed to save admin pricing plan');
+    } finally {
+      setPricingSaving(false);
+    }
+  };
 
   return (
     <div>
@@ -532,6 +622,16 @@ export default function AdminDashboard({ currentUser }) {
               >
                 <AlertTriangle size={18} />
                 Low Stock Alerts ({lowStockAlerts.length})
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => setActiveTab('ads')} 
+                className={`sidebar-link w-full text-left ${activeTab === 'ads' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <BarChart3 size={18} />
+                Ads Command
               </button>
             </li>
           </ul>
@@ -1397,7 +1497,335 @@ export default function AdminDashboard({ currentUser }) {
                 </div>
               )}
 
-              {/* TAB 7: LOCATION ADS */}
+              {/* TAB 7: ADS COMMAND */}
+              {activeTab === 'ads' && (
+                <div>
+                  <div style={{ marginBottom: '28px' }}>
+                    <h2 style={{ fontSize: '1.75rem', marginBottom: '6px' }}>Admin Ads + Pricing + Profit Command Center</h2>
+                    <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.925rem', maxWidth: '920px', lineHeight: 1.65 }}>
+                      This is the admin brain of BrandCreator: supplier stock comes in, then admin decides selling price, ad budget, location strategy, platform priority, and expected BrandCreator profit before campaign approval.
+                    </p>
+                  </div>
+
+                  {panelErrors.pricing && (
+                    <div style={{
+                      marginBottom: '18px', padding: '14px 16px', borderRadius: '14px',
+                      background: 'rgba(234, 67, 53, 0.08)', border: '1px solid rgba(234, 67, 53, 0.22)',
+                      color: '#ea4335', fontSize: '0.86rem', fontWeight: 700
+                    }}>
+                      {panelErrors.pricing}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 0.9fr) minmax(460px, 1.1fr)', gap: '24px', alignItems: 'start' }}>
+                    <div className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{
+                          width: '48px', height: '48px', borderRadius: '16px', background: 'rgba(52, 168, 83, 0.12)',
+                          border: '1px solid rgba(52, 168, 83, 0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: '#34a853'
+                        }}>
+                          <BarChart3 size={22} />
+                        </div>
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: '1.12rem' }}>Campaign Product Control</h3>
+                          <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                            Product select korle pricing, stock, and location intelligence same screen-e asbe.
+                          </p>
+                        </div>
+                      </div>
+
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Product
+                        </span>
+                        <select
+                          value={selectedAdsProductId}
+                          onChange={(e) => handleSelectAdsCommandProduct(e.target.value)}
+                          className="styled-input"
+                        >
+                          <option value="">Select product for ads command</option>
+                          {pricingProducts.map((product) => (
+                            <option key={product.productId} value={product.productId}>
+                              {product.productName || product.sku} {product.sku ? `(${product.sku})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {selectedPricingProduct ? (
+                        <div style={{
+                          display: 'grid', gridTemplateColumns: '72px 1fr', gap: '14px', padding: '14px',
+                          background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px'
+                        }}>
+                          <div style={{
+                            width: '72px', height: '72px', borderRadius: '16px', background: 'linear-gradient(135deg, rgba(59,130,246,0.22), rgba(52,168,83,0.16))',
+                            border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                          }}>
+                            <Package size={28} style={{ color: 'hsl(var(--primary))' }} />
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 950, color: '#fff', fontSize: '1rem', marginBottom: '5px' }}>
+                              {selectedPricingProduct.productName}
+                            </div>
+                            <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.78rem', marginBottom: '9px' }}>
+                              {selectedPricingProduct.brand || 'No brand'} | {selectedPricingProduct.category || 'No category'} | {selectedPricingProduct.sku}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <span className={`pill-badge ${getProfitBadge().className}`}>{getProfitBadge().label}</span>
+                              <span className="pill-badge pill-pending">SELL {sellAvailableForCommand}</span>
+                              <span className="pill-badge pill-draft">Supplier RPU BDT {supplierRpu.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ padding: '20px', borderRadius: '16px', background: 'rgba(255,255,255,0.025)', color: 'hsl(var(--text-muted))', textAlign: 'center' }}>
+                          Select a product to start campaign pricing and ads intelligence.
+                        </div>
+                      )}
+
+                      <form onSubmit={handleSavePricingPlan} style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '14px' }}>
+                        {[
+                          ['Admin Selling Price', 'adminSellingPrice'],
+                          ['Ads Budget Planned', 'adBudgetPlanned'],
+                          ['Platform Commission', 'platformCommission'],
+                          ['Delivery/Ops Cost', 'deliveryOpsCost'],
+                          ['Discount Amount', 'discountAmount']
+                        ].map(([label, key]) => (
+                          <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '7px', gridColumn: key === 'discountAmount' ? 'span 2' : 'span 1' }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: '850', color: 'hsl(var(--text-muted))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              {label}
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={pricingForm[key]}
+                              onChange={(e) => setPricingForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                              className="styled-input"
+                              placeholder="0.00"
+                            />
+                          </label>
+                        ))}
+
+                        <button
+                          type="submit"
+                          disabled={pricingSaving || !selectedPricingProduct}
+                          className="btn-primary"
+                          style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '14px 18px' }}
+                        >
+                          {pricingSaving ? <RefreshCw size={16} className="spin-anim" /> : <DollarSign size={16} />}
+                          {pricingSaving ? 'Saving pricing plan...' : 'Save Admin Pricing Plan'}
+                        </button>
+                      </form>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                      <div className="glass-card-premium">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start', marginBottom: '20px' }}>
+                          <div>
+                            <span className={`pill-badge ${getProfitBadge().className}`}>{getProfitBadge().label}</span>
+                            <h3 style={{ margin: '12px 0 6px', fontSize: '1.25rem' }}>Profit Simulator</h3>
+                            <p style={{ margin: 0, color: 'hsl(var(--text-secondary))', fontSize: '0.88rem', lineHeight: 1.6 }}>
+                              Supplier RPU + ads budget + ops cost dhore BrandCreator projected net profit.
+                            </p>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: '2rem', fontWeight: 950, color: projectedNetProfit > 0 ? '#34a853' : '#ea4335' }}>
+                              BDT {projectedNetProfit.toFixed(2)}
+                            </div>
+                            <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.74rem', fontWeight: 800, textTransform: 'uppercase' }}>
+                              Net Profit / Unit
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+                          {[
+                            ['Selling Price', adminSellingPrice],
+                            ['Supplier Payable', supplierRpu],
+                            ['Ads Cost', plannedAdsCost],
+                            ['Delivery/Ops', deliveryOpsCost],
+                            ['Discount', discountAmount],
+                            ['Margin', `${projectedMarginPercent.toFixed(1)}%`]
+                          ].map(([label, value]) => (
+                            <div key={label} style={{ padding: '15px', borderRadius: '14px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.72rem', fontWeight: 850, textTransform: 'uppercase' }}>{label}</div>
+                              <div style={{ color: '#fff', fontWeight: 950, marginTop: '7px' }}>
+                                {typeof value === 'number' ? `BDT ${value.toFixed(2)}` : value}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="glass-card-premium">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start', marginBottom: '18px' }}>
+                          <div>
+                            <h3 style={{ margin: 0, fontSize: '1.18rem' }}>Location + Platform Intelligence</h3>
+                            <p style={{ margin: '6px 0 0', color: 'hsl(var(--text-secondary))', fontSize: '0.86rem' }}>
+                              Sync korle real-time location recommendation and platform suggestion update hobe.
+                            </p>
+                          </div>
+                          <span className={`pill-badge ${activeLocationSuggestion ? 'pill-approved' : 'pill-submitted'}`}>
+                            {activeLocationSuggestion ? 'SYNCED' : 'NEED LOCATION SYNC'}
+                          </span>
+                        </div>
+
+                        <form onSubmit={handleAnalyzeLocationAds} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '12px', marginBottom: '18px' }}>
+                          <select
+                            value={selectedAdsLocation}
+                            onChange={(e) => setSelectedAdsLocation(e.target.value)}
+                            className="styled-input"
+                          >
+                            {locationProfiles.length === 0 && <option value="Uttara">Uttara</option>}
+                            {locationProfiles.map((profile) => (
+                              <option key={profile.profileId} value={profile.locationName}>
+                                {profile.locationName} - {profile.city}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="submit"
+                            disabled={locationAdsLoading || !selectedAdsProductId}
+                            className="btn-secondary"
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px' }}
+                          >
+                            {locationAdsLoading ? <RefreshCw size={15} className="spin-anim" /> : <MapPin size={15} />}
+                            Sync
+                          </button>
+                        </form>
+
+                        {activeLocationSuggestion ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '18px', alignItems: 'start' }}>
+                            <div style={{ textAlign: 'center', padding: '16px', borderRadius: '16px', background: 'rgba(59,130,246,0.09)', border: '1px solid rgba(59,130,246,0.22)' }}>
+                              <div style={{ fontSize: '2rem', fontWeight: 950, color: 'hsl(var(--primary))' }}>{activeLocationSuggestion.fitScore}</div>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.7rem', fontWeight: 850, textTransform: 'uppercase' }}>Fit Score</div>
+                            </div>
+                            <div>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                                {(activeLocationSuggestion.suggestedAreas || []).slice(0, 4).map((area) => (
+                                  <span key={area} className="pill-badge pill-approved">{area}</span>
+                                ))}
+                              </div>
+                              <div style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.86rem', lineHeight: 1.6, marginBottom: '10px' }}>
+                                {activeLocationSuggestion.reasonBangla || activeLocationSuggestion.reasonEnglish}
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {(activeLocationSuggestion.platformSuggestion || []).slice(0, 3).map((platform) => (
+                                  <span key={platform.platformName} className="pill-badge pill-pending">
+                                    #{platform.priority} {platform.platformName}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ padding: '22px', textAlign: 'center', borderRadius: '16px', background: 'rgba(255,255,255,0.02)', color: 'hsl(var(--text-muted))' }}>
+                            Select product and sync a location to unlock platform and budget suggestions.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '16px', marginTop: '24px' }}>
+                    {[
+                      ['Total Gross Revenue', profitLedgerSummary?.totalGrossRevenue || 0],
+                      ['Supplier Payable', profitLedgerSummary?.totalSupplierPayable || 0],
+                      ['Platform Commission', profitLedgerSummary?.totalPlatformCommissionRealized || 0],
+                      ['Net Profit Realized', profitLedgerSummary?.totalNetProfitRealized || 0],
+                      ['Return Loss', profitLedgerSummary?.totalReturnLoss || 0]
+                    ].map(([label, value]) => (
+                      <div key={label} className="glass-card-premium" style={{ padding: '20px' }}>
+                        <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.72rem', fontWeight: 850, textTransform: 'uppercase' }}>{label}</div>
+                        <div style={{ color: label.includes('Loss') ? '#ea4335' : 'hsl(var(--primary))', fontWeight: 950, fontSize: '1.45rem', marginTop: '8px' }}>
+                          BDT {Number(value || 0).toFixed(2)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ marginTop: '24px' }} className="premium-table-container">
+                    <table className="premium-table">
+                      <thead>
+                        <tr>
+                          <th>Product</th>
+                          <th>Admin Price</th>
+                          <th>Supplier RPU</th>
+                          <th>Ads Budget</th>
+                          <th>Projected Profit</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pricingProducts.length === 0 ? (
+                          <tr>
+                            <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>
+                              No pricing products loaded yet.
+                            </td>
+                          </tr>
+                        ) : pricingProducts.slice(0, 12).map((product) => {
+                          const productCost = Number(product.rpuMrp || product.basePrice || 0);
+                          const productNet = Number(product.netBrandCreatorProfit || 0);
+                          return (
+                            <tr key={product.productId} className="interactive-row">
+                              <td>
+                                <div style={{ fontWeight: 850, color: '#fff' }}>{product.productName}</div>
+                                <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.76rem' }}>{product.sku}</div>
+                              </td>
+                              <td style={{ fontWeight: 850 }}>BDT {Number(product.adminSellingPrice || product.suggestedRetailPrice || product.basePrice || 0).toFixed(2)}</td>
+                              <td>BDT {productCost.toFixed(2)}</td>
+                              <td>BDT {Number(product.adBudgetPlanned || 0).toFixed(2)}</td>
+                              <td style={{ color: productNet > 0 ? '#34a853' : productNet < 0 ? '#ea4335' : 'hsl(var(--text-muted))', fontWeight: 950 }}>
+                                BDT {productNet.toFixed(2)}
+                              </td>
+                              <td>
+                                <span className={`pill-badge ${productNet > 0 ? 'pill-approved' : product.planStatus ? 'pill-submitted' : 'pill-draft'}`}>
+                                  {product.planStatus || 'NO PLAN'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {profitLedgerItems.length > 0 && (
+                    <div style={{ marginTop: '24px' }} className="premium-table-container">
+                      <table className="premium-table">
+                        <thead>
+                          <tr>
+                            <th>Order</th>
+                            <th>Product</th>
+                            <th>Gross</th>
+                            <th>Supplier</th>
+                            <th>Ads Share</th>
+                            <th>Net Profit</th>
+                            <th>Payment</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {profitLedgerItems.slice(0, 8).map((item) => (
+                            <tr key={item.breakdownId} className="interactive-row">
+                              <td style={{ fontFamily: 'monospace', fontWeight: 850 }}>{item.orderRef}</td>
+                              <td>{item.productName}</td>
+                              <td>BDT {Number(item.grossRevenue || 0).toFixed(2)}</td>
+                              <td>BDT {Number(item.supplierPayable || 0).toFixed(2)}</td>
+                              <td>BDT {Number(item.adSpendShare || 0).toFixed(2)}</td>
+                              <td style={{ color: '#34a853', fontWeight: 950 }}>BDT {Number(item.netBrandCreatorProfit || 0).toFixed(2)}</td>
+                              <td><span className="pill-badge pill-approved">{item.paymentStatus}</span></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 8: LOCATION ADS */}
               {activeTab === 'locationAds' && (
                 <div>
                   <div style={{ marginBottom: '28px' }}>
