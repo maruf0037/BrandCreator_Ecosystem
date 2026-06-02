@@ -254,6 +254,26 @@ exports.createOrder = async (req, res) => {
         }).catch(err => logger.error('WhatsApp checkout confirmation error:', err));
       }
 
+      // Trigger Meta CAPI InitiateCheckout event asynchronously (ONLINE only)
+      if (!isPhysical) {
+        const facebookCAPI = require('../services/facebookCAPI');
+        const userData = {
+          email: customerEmail,
+          phone: customerPhone,
+          ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+          userAgent: req.headers['user-agent']
+        };
+        facebookCAPI.sendServerEvent('InitiateCheckout', userData, {
+          value: parseFloat(totalAmount),
+          currency: currency || 'BDT',
+          contents: items.map(item => ({
+            productId: item.productId,
+            qty: item.qty,
+            unitPrice: item.unitPrice
+          }))
+        }, null, orderRef).catch(err => logger.error('Meta CAPI InitiateCheckout tracking error:', err));
+      }
+
       logger.info({
         event: isPhysical ? 'order.commit' : 'order.reserve',
         reqId: req.reqId,
@@ -472,6 +492,26 @@ exports.confirmOrder = async (req, res) => {
           orderId: order.OrderId
         }).catch(err => logger.error('WhatsApp payment verification confirm error:', err));
       }
+
+      // Trigger Meta CAPI Purchase event asynchronously
+      const facebookCAPI = require('../services/facebookCAPI');
+      const userData = {
+        email: order.CustomerEmail,
+        phone: order.CustomerPhone,
+        ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent']
+      };
+      
+      const purchaseItems = itemsRes.recordset.map(item => ({
+        productId: item.ProductId,
+        qty: item.Qty
+      }));
+      
+      facebookCAPI.sendServerEvent('Purchase', userData, {
+        value: parseFloat(order.TotalAmount),
+        currency: 'BDT',
+        contents: purchaseItems
+      }, null, orderRef).catch(err => logger.error('Meta CAPI Purchase tracking error:', err));
 
       logger.info({
         event: 'order.confirm',
