@@ -3850,12 +3850,6 @@ export default function AdminDashboard({ currentUser }) {
                 </div>
               )}
 
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* TAB: REVENUE DASHBOARD */}
               {activeTab === 'revenue' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }} className="tab-animation">

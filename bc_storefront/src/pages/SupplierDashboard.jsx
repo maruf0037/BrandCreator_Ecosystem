@@ -1840,7 +1840,7 @@ export default function SupplierDashboard({ currentUser }) {
               )}
 
               {/* TAB 3: BYOK */}
-              {activeTab === 'byok' && (
+              {activeTab === 'byok' &&
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '30px' }}>
                   {/* BYOK Form */}
                   <div className="glass-card-premium" style={{ borderLeft: '4px solid hsl(var(--primary))' }}>
@@ -1891,6 +1891,7 @@ export default function SupplierDashboard({ currentUser }) {
                     </div>
                   </div>
                 </div>
+              }
               {/* TAB: MY COMMISSIONS */}
               {activeTab === 'commissions' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }} className="tab-animation">
