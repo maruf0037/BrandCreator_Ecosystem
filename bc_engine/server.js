@@ -15,6 +15,8 @@ const whatsappRoutes = require('./routes/whatsappRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const returnRoutes = require('./routes/returnRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const commissionRoutes = require('./routes/commissionRoutes');
+const revenueRoutes = require('./routes/revenueRoutes');
 const healthRoutes = require('./src/routes/healthRoutes');
 
 // Observability Additions
@@ -31,7 +33,9 @@ const app = express();
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:8080',
   'http://localhost:8080',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  'http://100.110.252.19:5173',
+  'http://100.110.252.19:8080'
 ];
 
 app.use(cors({
@@ -83,6 +87,15 @@ app.get('/health/ai', async (_req, res) => {
   res.json({ ai: hasKey ? 'configured' : 'missing_key', reachable });
 });
 
+// Register static uploads serving
+const path = require('path');
+const fs = require('fs');
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
+
 // Register routers
 app.use('/auth', authRoutes);
 app.use('/api', inventoryRoutes);
@@ -96,6 +109,8 @@ app.use('/api', whatsappRoutes);
 app.use('/api', walletRoutes);
 app.use('/api', returnRoutes);
 app.use('/api', uploadRoutes);
+app.use('/api', commissionRoutes);
+app.use('/api', revenueRoutes);
 app.use('/', healthRoutes); // GET /health/deep
 
 // Global http error tracking middleware

@@ -1,0 +1,9 @@
+tunnel: b1fabaf9-cdbc-4aac-85c2-b59c58b79fac
+credentials-file: C:\Users\Admin\.cloudflared\b1fabaf9-cdbc-4aac-85c2-b59c58b79fac.json
+
+ingress:
+  - hostname: api.brandcreator.eu.cc
+    service: http://localhost:5000
+  - hostname: app.brandcreator.eu.cc
+    service: http://localhost:5173
+  - service: http_status:404

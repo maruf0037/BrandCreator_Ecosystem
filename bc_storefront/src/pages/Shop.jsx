@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { 
   ShoppingBag, Heart, LogOut, RefreshCw, 
   ShoppingCart, Trash2, Check, X, AlertCircle, ShoppingCartIcon,
-  Clock, ShieldCheck, Tag
+  Clock, ShieldCheck, Tag, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -101,6 +101,102 @@ const SkeletonCard = () => (
   </div>
 );
 
+
+function ProductImageCarousel({ product, backendUrl, displayName }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  
+  // Resolve images array
+  const images = product.images && product.images.length > 0 
+    ? product.images 
+    : [{ imageUrl: product.imageUrl || `https://images.unsplash.com/photo-${1580000000000 + product.productId}?auto=format&fit=crop&q=80&w=600` }];
+
+  const handleNext = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActiveIndex((prev) => (prev + 1) % images.length);
+  };
+
+  const handlePrev = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActiveIndex((prev) => (prev - 1 + images.length) % images.length);
+  };
+
+  const currentImage = images[activeIndex];
+  const imageUrl = currentImage.imageUrl.startsWith('/uploads') 
+    ? `${backendUrl}${currentImage.imageUrl}` 
+    : currentImage.imageUrl;
+
+  return (
+    <>
+      {/* Slider image */}
+      <img
+        src={imageUrl}
+        onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&q=80&w=600'; }}
+        alt={`${displayName} - Image ${activeIndex + 1}`}
+        style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'all 0.4s ease' }}
+        className="product-image"
+      />
+      
+      {/* Navigation Arrows */}
+      {images.length > 1 && (
+        <>
+          <button 
+            onClick={handlePrev}
+            style={{
+              position: 'absolute', top: '50%', left: '8px', transform: 'translateY(-50%)',
+              background: 'rgba(9, 13, 20, 0.65)', border: '1px solid rgba(255,255,255,0.08)',
+              width: '28px', height: '28px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', cursor: 'pointer', transition: 'all 0.2s ease', zIndex: 5,
+              backdropFilter: 'blur(4px)',
+              pointerEvents: 'auto'
+            }}
+            className="carousel-nav-btn"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <button 
+            onClick={handleNext}
+            style={{
+              position: 'absolute', top: '50%', right: '8px', transform: 'translateY(-50%)',
+              background: 'rgba(9, 13, 20, 0.65)', border: '1px solid rgba(255,255,255,0.08)',
+              width: '28px', height: '28px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', cursor: 'pointer', transition: 'all 0.2s ease', zIndex: 5,
+              backdropFilter: 'blur(4px)',
+              pointerEvents: 'auto'
+            }}
+            className="carousel-nav-btn"
+          >
+            <ChevronRight size={14} />
+          </button>
+        </>
+      )}
+
+      {/* Slide Indicators (micro-dots) */}
+      {images.length > 1 && (
+        <div style={{
+          position: 'absolute', bottom: '12px', left: '50%', transform: 'translateX(-50%)',
+          display: 'flex', gap: '5px', zIndex: 5, background: 'rgba(9,13,20,0.5)', padding: '4px 8px',
+          borderRadius: '20px', backdropFilter: 'blur(4px)'
+        }}>
+          {images.map((_, idx) => (
+            <span 
+              key={idx}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveIndex(idx); }}
+              style={{
+                width: '6px', height: '6px', borderRadius: '50%',
+                background: idx === activeIndex ? 'hsl(var(--primary))' : 'rgba(255,255,255,0.3)',
+                boxShadow: idx === activeIndex ? '0 0 8px hsl(var(--primary))' : 'none',
+                cursor: 'pointer', transition: 'all 0.25s ease'
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function Shop({ currentUser }) {
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
@@ -146,6 +242,14 @@ export default function Shop({ currentUser }) {
 
   useEffect(() => {
     fetchShopData();
+    
+    // Capture UTM parameters from URL and save in sessionStorage
+    const params = new URLSearchParams(window.location.search);
+    const utmSource = params.get('utm_source');
+    if (utmSource) {
+      sessionStorage.setItem('bc_utm_source', utmSource);
+      console.log(`UTM Source captured and persisted: ${utmSource}`);
+    }
   }, []);
 
   const handleLogout = () => {
@@ -238,12 +342,16 @@ export default function Shop({ currentUser }) {
         unitPrice: item.price
       }));
 
+      // Retrieve UTM source from sessionStorage
+      const utmSource = sessionStorage.getItem('bc_utm_source') || null;
+
       await api.post('/api/orders', {
         orderRef,
         items: itemsPayload,
         currency: 'BDT',
         customerPhone: customerPhone.trim(),
-        saleChannel: 'ONLINE'
+        saleChannel: 'ONLINE',
+        utmSource
       });
 
       setCustomerPhone('');
@@ -507,14 +615,8 @@ export default function Shop({ currentUser }) {
                             border: '1px solid rgba(255, 255, 255, 0.04)', background: 'rgba(12, 17, 26, 0.5)', opacity: hasStock ? 1 : 0.65
                           }}>
                             {/* Product Image */}
-                            <div style={{ position: 'relative', height: '250px', overflow: 'hidden' }}>
-                              <img
-                                src={product.imageUrl || `https://images.unsplash.com/photo-${1580000000000 + product.productId}?auto=format&fit=crop&q=80&w=600`}
-                                onError={(e) => e.target.src = 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&q=80&w=600'}
-                                alt={displayName}
-                                style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform 0.4s ease' }}
-                                className="product-image"
-                              />
+                            <div style={{ position: 'relative', height: '250px', overflow: 'hidden' }} className="product-carousel-container">
+                              <ProductImageCarousel product={product} backendUrl={backendUrl} displayName={displayName} />
                               
                               {/* Stock badge */}
                               <div style={{

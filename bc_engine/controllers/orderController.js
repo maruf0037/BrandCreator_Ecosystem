@@ -2,13 +2,15 @@ const { poolPromise, sql } = require('../config/db');
 const crypto = require('crypto');
 const logger = require('../src/logger');
 const { outboxPendingGauge, webhookVerifyCounter } = require('../src/metrics');
+const { resolveCommissionRate } = require('./commissionController');
 
 // Helper function to record order item splits in OrderProfitBreakdowns and update profit snapshots
 const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
   const orderChannelRes = await transaction.request()
     .input('orderId', sql.BigInt, orderId)
-    .query("SELECT SaleChannel FROM dbo.Orders WHERE OrderId = @orderId");
+    .query("SELECT SaleChannel, UtmSource FROM dbo.Orders WHERE OrderId = @orderId");
   const saleChannel = orderChannelRes.recordset[0]?.SaleChannel || 'ONLINE';
+  const utmSource = orderChannelRes.recordset[0]?.UtmSource || null;
 
   if (saleChannel !== 'ONLINE') {
     logger.info(`Skipping profit/ads breakdown recording for non-online order #${orderId} (Channel: ${saleChannel})`);
@@ -24,6 +26,8 @@ const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
         oi.UnitPrice AS unitPrice,
         p.BasePrice AS basePrice,
         p.RPU_MRP AS rpuMrp,
+        p.OwnershipType AS ownershipType,
+        p.Category AS category,
         ap.AdminSellingPrice AS adminSellingPrice,
         ap.AdBudgetPlanned AS adBudgetPlanned,
         ap.PlatformCommission AS platformCommission,
@@ -45,7 +49,7 @@ const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
       ? parseFloat(row.rpuMrp) 
       : (row.basePrice !== null ? parseFloat(row.basePrice) : 0.00);
 
-    const supplierPayable = qty * supplierCostPerUnit;
+    const isOwn = (row.ownershipType === 'OWN');
 
     // Pricing plan variables (fallback to 0 if no plan)
     const adPlannedUnit = row.adBudgetPlanned !== null ? parseFloat(row.adBudgetPlanned) : 0.00;
@@ -59,8 +63,45 @@ const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
     const deliveryOpsCost = qty * deliveryUnit;
     const discountAmount = qty * discountUnit;
 
-    // Net BrandCreator profit formula: GrossRevenue minus supplier cost, planned marketing, logistics, and discounts
-    const netBrandCreatorProfit = grossRevenue - supplierPayable - adSpendShare - deliveryOpsCost - discountAmount;
+    let finalSupplierPayable = 0;
+    let finalNetProfit = 0;
+
+    if (isOwn) {
+      // Direct OWN product: supplierCostPerUnit behaves as COGS
+      finalSupplierPayable = qty * supplierCostPerUnit;
+      finalNetProfit = grossRevenue - finalSupplierPayable - adSpendShare - deliveryOpsCost - discountAmount;
+    } else {
+      // Multi-vendor SUPPLIER product: resolve commission rate dynamically (waterfall)
+      const ownershipRes = await transaction.request()
+        .input('productId', sql.Int, row.productId)
+        .query("SELECT TOP 1 SupplierEmail FROM dbo.ProductOwnership WHERE ProductId = @productId AND IsActive = 1");
+      const supplierEmail = ownershipRes.recordset[0]?.SupplierEmail || 'supplier@test.com';
+
+      const rateResult = await resolveCommissionRate(transaction, row.productId, supplierEmail, row.category);
+      const commissionRate = rateResult.rate;
+      const commissionAmount = (grossRevenue * commissionRate) / 100.0;
+
+      finalSupplierPayable = grossRevenue - commissionAmount;
+      finalNetProfit = commissionAmount - adSpendShare - deliveryOpsCost - discountAmount;
+
+      // Insert record to Commission Ledger
+      await transaction.request()
+        .input('orderId', sql.BigInt, orderId)
+        .input('productId', sql.Int, row.productId)
+        .input('supplierEmail', sql.NVarChar(255), supplierEmail)
+        .input('saleAmount', sql.Decimal(18, 2), grossRevenue)
+        .input('commissionRate', sql.Decimal(5, 2), commissionRate)
+        .input('commissionAmount', sql.Decimal(18, 2), commissionAmount)
+        .input('supplierPayable', sql.Decimal(18, 2), finalSupplierPayable)
+        .query(`
+          INSERT INTO dbo.CommissionLedger (
+            OrderId, ProductId, SupplierEmail, SaleAmount, CommissionRate, CommissionAmount, SupplierPayable, Status
+          )
+          VALUES (
+            @orderId, @productId, @supplierEmail, @saleAmount, @commissionRate, @commissionAmount, @supplierPayable, 'PENDING'
+          )
+        `);
+    }
 
     // Insert into dbo.OrderProfitBreakdowns
     await transaction.request()
@@ -68,23 +109,24 @@ const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
       .input('productId', sql.Int, row.productId)
       .input('qty', sql.Int, qty)
       .input('grossRevenue', sql.Decimal(18, 2), grossRevenue)
-      .input('supplierPayable', sql.Decimal(18, 2), supplierPayable)
+      .input('supplierPayable', sql.Decimal(18, 2), finalSupplierPayable)
       .input('platformCommission', sql.Decimal(18, 2), platformCommission)
       .input('adSpendShare', sql.Decimal(18, 2), adSpendShare)
       .input('deliveryOpsCost', sql.Decimal(18, 2), deliveryOpsCost)
       .input('discountAmount', sql.Decimal(18, 2), discountAmount)
-      .input('netProfit', sql.Decimal(18, 2), netBrandCreatorProfit)
-      .input('profitAfterReturn', sql.Decimal(18, 2), netBrandCreatorProfit)
+      .input('netProfit', sql.Decimal(18, 2), finalNetProfit)
+      .input('profitAfterReturn', sql.Decimal(18, 2), finalNetProfit)
+      .input('utmSource', sql.NVarChar(150), utmSource)
       .query(`
         INSERT INTO dbo.OrderProfitBreakdowns (
           OrderId, ProductId, Qty, GrossRevenue, SupplierPayable, PlatformCommission,
           AdSpendShare, DeliveryOpsCost, DiscountAmount, NetBrandCreatorProfit, ReturnLoss, 
-          ProfitAfterReturn, PaymentStatus
+          ProfitAfterReturn, PaymentStatus, UtmSource
         )
         VALUES (
           @orderId, @productId, @qty, @grossRevenue, @supplierPayable, @platformCommission,
           @adSpendShare, @deliveryOpsCost, @discountAmount, @netProfit, 0.00, 
-          @profitAfterReturn, 'PAID'
+          @profitAfterReturn, 'PAID', @utmSource
         )
       `);
       
@@ -103,7 +145,7 @@ const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
 
 // POST /api/orders
 exports.createOrder = async (req, res) => {
-  const { orderRef, items, currency, customerPhone, saleChannel } = req.body;
+  const { orderRef, items, currency, customerPhone, saleChannel, utmSource } = req.body;
   const customerEmail = req.user?.email || 'customer@test.com';
   const activeSaleChannel = saleChannel || 'ONLINE';
 
@@ -159,14 +201,15 @@ exports.createOrder = async (req, res) => {
         .input('saleChannel', sql.NVarChar(50), activeSaleChannel)
         .input('paymentProvider', sql.NVarChar(50), paymentProvider)
         .input('transactionId', sql.NVarChar(100), transactionId)
+        .input('utmSource', sql.NVarChar(150), utmSource || null)
         .query(isPhysical ? `
-          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, PaymentStatus, TotalAmount, PaidAmount, PaidAt, Currency, CustomerPhone, SaleChannel, PaymentProvider, TransactionId)
+          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, PaymentStatus, TotalAmount, PaidAmount, PaidAt, Currency, CustomerPhone, SaleChannel, PaymentProvider, TransactionId, UtmSource)
           OUTPUT inserted.OrderId
-          VALUES (@orderRef, @customerEmail, 'CONFIRMED', 'PAYMENT_VERIFIED', @totalAmount, @totalAmount, SYSUTCDATETIME(), @currency, @customerPhone, @saleChannel, @paymentProvider, @transactionId)
+          VALUES (@orderRef, @customerEmail, 'CONFIRMED', 'PAYMENT_VERIFIED', @totalAmount, @totalAmount, SYSUTCDATETIME(), @currency, @customerPhone, @saleChannel, @paymentProvider, @transactionId, @utmSource)
         ` : `
-          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency, CustomerPhone, SaleChannel)
+          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency, CustomerPhone, SaleChannel, UtmSource)
           OUTPUT inserted.OrderId
-          VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency, @customerPhone, @saleChannel)
+          VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency, @customerPhone, @saleChannel, @utmSource)
         `);
 
       const orderId = orderInsertRes.recordset[0].OrderId;

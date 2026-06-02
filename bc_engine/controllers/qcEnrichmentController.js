@@ -518,6 +518,19 @@ exports.getProductDetails = async (req, res) => {
       }
     }
 
+    // Fetch all images for this product
+    const imagesResult = await pool.request()
+      .input('id', sql.Int, id)
+      .query('SELECT ImageId AS imageId, ImageUrl AS imageUrl, IsPrimary AS isPrimary, AltText AS altText FROM dbo.ProductImages WHERE ProductId = @id ORDER BY IsPrimary DESC, ImageId ASC');
+
+    const images = imagesResult.recordset.map(img => ({
+      imageId: img.imageId,
+      imageUrl: img.imageUrl,
+      isPrimary: img.isPrimary === 1 || img.isPrimary === true,
+      altText: img.altText
+    }));
+    const primaryImage = images.find(img => img.isPrimary) || images[0] || null;
+
     res.json({
       productId: product.ProductId,
       sku: product.SKU,
@@ -539,7 +552,8 @@ exports.getProductDetails = async (req, res) => {
       deliveryCoverageJson: product.DeliveryCoverageJson,
       onlineSellingRequested: product.OnlineSellingRequested === 1 || product.OnlineSellingRequested === true,
       productReadinessStatus: product.ProductReadinessStatus,
-      imageUrl: product.imageUrl || null
+      images: images,
+      imageUrl: primaryImage ? primaryImage.imageUrl : (product.imageUrl || null)
     });
   } catch (err) {
     res.status(500).json({ error: 'SERVER_ERROR', message: err.message });

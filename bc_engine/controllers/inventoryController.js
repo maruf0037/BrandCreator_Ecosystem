@@ -6,8 +6,11 @@ exports.createProduct = async (req, res) => {
     supplierUserId, sku, productName, basePrice, supplierNotes,
     barcode, brand, category, rpuMrp, suggestedRetailPrice, costNote,
     variantsJson, supplierLocation, deliveryCoverageJson, onlineSellingRequested,
-    productReadinessStatus, imageUrl
+    productReadinessStatus, imageUrl, ownershipType
   } = req.body;
+
+  // OWN products are created by Admin and auto-approved (skip QC)
+  const ownership = (ownershipType === 'OWN') ? 'OWN' : 'SUPPLIER';
 
   if (!supplierUserId || !sku || !productName) {
     return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'supplierUserId, sku, and productName are required' });
@@ -19,9 +22,14 @@ exports.createProduct = async (req, res) => {
     await transaction.begin();
 
     try {
-      // 1. Insert product
+      // 1. Insert product — OWN products auto-approve and skip QC
+      const isOwn = ownership === 'OWN';
+      const effectiveStatus = isOwn ? 'ACTIVE' : 'ACTIVE';
+      const effectiveQCStatus = isOwn ? 'APPROVED' : null;
+      const effectiveReadiness = isOwn ? 'CAMPAIGN_READY' : (productReadinessStatus || 'NEEDS_REVIEW');
+
       const productResult = await transaction.request()
-        .input('supplierUserId', sql.Int, supplierUserId)
+        .input('supplierUserId', sql.Int, supplierUserId || 0)
         .input('sku', sql.NVarChar(100), sku)
         .input('productName', sql.NVarChar(255), productName)
         .input('basePrice', sql.Decimal(18, 2), basePrice ? parseFloat(basePrice) : null)
@@ -36,31 +44,46 @@ exports.createProduct = async (req, res) => {
         .input('supplierLocation', sql.NVarChar(255), supplierLocation || null)
         .input('deliveryCoverageJson', sql.NVarChar(sql.MAX), deliveryCoverageJson || null)
         .input('onlineSellingRequested', sql.Bit, onlineSellingRequested !== undefined ? (onlineSellingRequested ? 1 : 0) : 1)
-        .input('productReadinessStatus', sql.NVarChar(50), productReadinessStatus || 'NEEDS_REVIEW')
+        .input('productReadinessStatus', sql.NVarChar(50), effectiveReadiness)
+        .input('ownershipType', sql.NVarChar(20), ownership)
         .query(`
           INSERT INTO dbo.Products (
             SupplierUserId, SKU, ProductName, BasePrice, SupplierNotes,
             Barcode, Brand, Category, RPU_MRP, SuggestedRetailPrice, CostNote,
             VariantsJson, SupplierLocation, DeliveryCoverageJson, OnlineSellingRequested,
-            ProductReadinessStatus
+            ProductReadinessStatus, OwnershipType
+            ${isOwn ? ', Status, QCStatus' : ''}
           )
           OUTPUT 
             inserted.ProductId, inserted.SKU, inserted.ProductName, inserted.BasePrice, inserted.SupplierNotes,
             inserted.Barcode, inserted.Brand, inserted.Category, inserted.RPU_MRP, inserted.SuggestedRetailPrice,
             inserted.CostNote, inserted.VariantsJson, inserted.SupplierLocation, inserted.DeliveryCoverageJson,
-            inserted.OnlineSellingRequested, inserted.ProductReadinessStatus
+            inserted.OnlineSellingRequested, inserted.ProductReadinessStatus, inserted.OwnershipType
           VALUES (
             @supplierUserId, @sku, @productName, @basePrice, @supplierNotes,
             @barcode, @brand, @category, @rpuMrp, @suggestedRetailPrice, @costNote,
             @variantsJson, @supplierLocation, @deliveryCoverageJson, @onlineSellingRequested,
-            @productReadinessStatus
+            @productReadinessStatus, @ownershipType
+            ${isOwn ? ", 'ACTIVE', 'APPROVED'" : ''}
           )
         `);
 
       const product = productResult.recordset[0];
 
-      // 1b. Insert image if provided
-      if (imageUrl && imageUrl.trim() !== '') {
+      // 1b. Insert multiple images if provided, fallback to single imageUrl
+      if (req.body.images && Array.isArray(req.body.images) && req.body.images.length > 0) {
+        for (const img of req.body.images) {
+          await transaction.request()
+            .input('productId', sql.Int, product.ProductId)
+            .input('imageUrl', sql.NVarChar(500), img.imageUrl.trim())
+            .input('isPrimary', sql.Bit, img.isPrimary ? 1 : 0)
+            .input('altText', sql.NVarChar(255), (img.altText || '').trim() || 'Product Image')
+            .query(`
+              INSERT INTO dbo.ProductImages (ProductId, ImageUrl, IsPrimary, AltText)
+              VALUES (@productId, @imageUrl, @isPrimary, @altText)
+            `);
+        }
+      } else if (imageUrl && imageUrl.trim() !== '') {
         await transaction.request()
           .input('productId', sql.Int, product.ProductId)
           .input('imageUrl', sql.NVarChar(500), imageUrl.trim())
@@ -80,16 +103,18 @@ exports.createProduct = async (req, res) => {
             (@productId, 'SELL', 0, 0, 1)
         `);
 
-      // 3. Auto-assign ownership if supplierEmail is available
-      const supplierEmail = req.user?.email || req.body.supplierEmail;
-      if (supplierEmail) {
-        await transaction.request()
-          .input('productId', sql.Int, product.ProductId)
-          .input('email', sql.NVarChar(255), supplierEmail)
-          .query(`
-            INSERT INTO dbo.ProductOwnership (ProductId, SupplierEmail, IsActive)
-            VALUES (@productId, @email, 1)
-          `);
+      // 3. Auto-assign ownership if supplierEmail is available (skip for OWN products)
+      if (!isOwn) {
+        const supplierEmail = req.user?.email || req.body.supplierEmail;
+        if (supplierEmail) {
+          await transaction.request()
+            .input('productId', sql.Int, product.ProductId)
+            .input('email', sql.NVarChar(255), supplierEmail)
+            .query(`
+              INSERT INTO dbo.ProductOwnership (ProductId, SupplierEmail, IsActive)
+              VALUES (@productId, @email, 1)
+            `);
+        }
       }
 
       await transaction.commit();
@@ -111,6 +136,7 @@ exports.createProduct = async (req, res) => {
         deliveryCoverageJson: product.DeliveryCoverageJson,
         onlineSellingRequested: product.OnlineSellingRequested === 1 || product.OnlineSellingRequested === true,
         productReadinessStatus: product.ProductReadinessStatus,
+        ownershipType: product.OwnershipType || ownership,
         imageUrl: imageUrl || null,
         ledgers: [
           { ledgerType: 'MASTER', onHandQty: 0, reservedQty: 0 },
@@ -465,9 +491,34 @@ exports.getProducts = async (req, res) => {
  
   try {
     const pool = await poolPromise;
+
+    // Fetch all product images to group them by ProductId in memory
+    const imagesResult = await pool.request().query("SELECT * FROM dbo.ProductImages ORDER BY IsPrimary DESC, ImageId ASC");
+    const imagesByProduct = {};
+    imagesResult.recordset.forEach(img => {
+      const pid = img.ProductId;
+      if (!imagesByProduct[pid]) {
+        imagesByProduct[pid] = [];
+      }
+      imagesByProduct[pid].push({
+        imageId: img.ImageId,
+        imageUrl: img.ImageUrl,
+        isPrimary: img.IsPrimary === 1 || img.IsPrimary === true,
+        altText: img.AltText
+      });
+    });
  
     if (userRole === 'SuperAdmin' || userRole === 'Admin') {
-      const result = await pool.request()
+      // Build ownership filter if provided
+      const ownershipFilter = req.query.ownershipType;
+      let adminWhereClause = '';
+      const adminReq = pool.request();
+      if (ownershipFilter && ['OWN', 'SUPPLIER'].includes(ownershipFilter)) {
+        adminWhereClause = 'WHERE p.OwnershipType = @ownershipFilter';
+        adminReq.input('ownershipFilter', sql.NVarChar(20), ownershipFilter);
+      }
+
+      const result = await adminReq
         .query(`
           SELECT p.ProductId AS productId, p.SKU AS sku, p.ProductName AS productName, 
                  p.Status AS status, p.QCStatus AS qcStatus, p.QCReason AS qcReason,
@@ -478,6 +529,7 @@ exports.getProducts = async (req, res) => {
                  p.CostNote AS costNote, p.VariantsJson AS variantsJson,
                  p.SupplierLocation AS supplierLocation, p.DeliveryCoverageJson AS deliveryCoverageJson,
                  p.OnlineSellingRequested AS onlineSellingRequested, p.ProductReadinessStatus AS productReadinessStatus,
+                 p.OwnershipType AS ownershipType, p.CommissionRate AS commissionRate,
                  pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
                  COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved,
@@ -495,6 +547,7 @@ exports.getProducts = async (req, res) => {
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
           LEFT JOIN dbo.AdminPricingPlans ap ON p.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
+          ${adminWhereClause}
           ORDER BY p.ProductId DESC
         `);
  
@@ -503,11 +556,16 @@ exports.getProducts = async (req, res) => {
         if (row.enrichmentJson) {
           try { enrichment = JSON.parse(row.enrichmentJson); } catch (e) {}
         }
+        const prodImages = imagesByProduct[row.productId] || [];
+        const primaryImage = prodImages.find(img => img.isPrimary) || prodImages[0] || null;
+
         return {
           ...row,
           enrichmentJson: undefined,
           enrichment,
-          onlineSellingRequested: row.onlineSellingRequested === 1 || row.onlineSellingRequested === true
+          onlineSellingRequested: row.onlineSellingRequested === 1 || row.onlineSellingRequested === true,
+          images: prodImages,
+          imageUrl: primaryImage ? primaryImage.imageUrl : row.imageUrl
         };
       });
  
@@ -526,6 +584,7 @@ exports.getProducts = async (req, res) => {
                  p.CostNote AS costNote, p.VariantsJson AS variantsJson,
                  p.SupplierLocation AS supplierLocation, p.DeliveryCoverageJson AS deliveryCoverageJson,
                  p.OnlineSellingRequested AS onlineSellingRequested, p.ProductReadinessStatus AS productReadinessStatus,
+                 p.OwnershipType AS ownershipType,
                  pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
                  COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved
@@ -542,11 +601,16 @@ exports.getProducts = async (req, res) => {
         if (row.enrichmentJson) {
           try { enrichment = JSON.parse(row.enrichmentJson); } catch (e) {}
         }
+        const prodImages = imagesByProduct[row.productId] || [];
+        const primaryImage = prodImages.find(img => img.isPrimary) || prodImages[0] || null;
+
         return {
           ...row,
           enrichmentJson: undefined,
           enrichment,
-          onlineSellingRequested: row.onlineSellingRequested === 1 || row.onlineSellingRequested === true
+          onlineSellingRequested: row.onlineSellingRequested === 1 || row.onlineSellingRequested === true,
+          images: prodImages,
+          imageUrl: primaryImage ? primaryImage.imageUrl : row.imageUrl
         };
       });
  
@@ -563,6 +627,7 @@ exports.getProducts = async (req, res) => {
                  p.Barcode AS barcode, p.Brand AS brand, p.Category AS category,
                  p.RPU_MRP AS rpuMrp, p.SuggestedRetailPrice AS suggestedRetailPrice,
                  p.VariantsJson AS variantsJson, p.SupplierLocation AS supplierLocation,
+                 p.OwnershipType AS ownershipType,
                  pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved,
                  ap.AdminSellingPrice AS adminSellingPrice
@@ -579,10 +644,15 @@ exports.getProducts = async (req, res) => {
         if (row.enrichmentJson) {
           try { enrichment = JSON.parse(row.enrichmentJson); } catch (e) {}
         }
+        const prodImages = imagesByProduct[row.productId] || [];
+        const primaryImage = prodImages.find(img => img.isPrimary) || prodImages[0] || null;
+
         return {
           ...row,
           enrichmentJson: undefined,
-          enrichment
+          enrichment,
+          images: prodImages,
+          imageUrl: primaryImage ? primaryImage.imageUrl : row.imageUrl
         };
       });
  
@@ -621,6 +691,171 @@ exports.getTransfers = async (req, res) => {
  
     const result = await requestObj.query(query);
     res.json({ items: result.recordset });
+  } catch (err) {
+    res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+ 
+// PUT /api/products/:productId/images
+exports.updateProductImages = async (req, res) => {
+  const { productId } = req.params;
+  const { images } = req.body;
+  const userEmail = req.user?.email || '';
+  const userRole = req.user?.role || 'Supplier';
+ 
+  if (!images || !Array.isArray(images)) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'images array is required' });
+  }
+ 
+  try {
+    const pool = await poolPromise;
+    const parsedProductId = parseInt(productId, 10);
+ 
+    // Verify product exists
+    const prodCheck = await pool.request()
+      .input('productId', sql.Int, parsedProductId)
+      .query('SELECT ProductId FROM dbo.Products WHERE ProductId = @productId');
+ 
+    if (prodCheck.recordset.length === 0) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Product not found' });
+    }
+ 
+    // Check ownership for Suppliers
+    if (userRole === 'Supplier') {
+      const ownerCheck = await pool.request()
+        .input('productId', sql.Int, parsedProductId)
+        .input('email', sql.NVarChar(255), userEmail)
+        .query("SELECT TOP 1 1 FROM dbo.ProductOwnership WHERE ProductId = @productId AND SupplierEmail = @email AND IsActive = 1");
+ 
+      if (ownerCheck.recordset.length === 0) {
+        return res.status(403).json({ error: 'FORBIDDEN', message: 'Supplier does not own this product' });
+      }
+    }
+ 
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+ 
+    try {
+      // 1. Delete all existing images
+      await transaction.request()
+        .input('productId', sql.Int, parsedProductId)
+        .query('DELETE FROM dbo.ProductImages WHERE ProductId = @productId');
+ 
+      // 2. Insert new images
+      for (const img of images) {
+        if (!img.imageUrl || img.imageUrl.trim() === '') continue;
+        
+        await transaction.request()
+          .input('productId', sql.Int, parsedProductId)
+          .input('imageUrl', sql.NVarChar(500), img.imageUrl.trim())
+          .input('isPrimary', sql.Bit, img.isPrimary ? 1 : 0)
+          .input('altText', sql.NVarChar(255), (img.altText || '').trim() || 'Product Image')
+          .query(`
+            INSERT INTO dbo.ProductImages (ProductId, ImageUrl, IsPrimary, AltText)
+            VALUES (@productId, @imageUrl, @isPrimary, @altText)
+          `);
+      }
+ 
+      await transaction.commit();
+      res.json({ success: true, message: 'Product images updated successfully' });
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+
+// ==========================================
+// GET /api/catalog/fb-feed
+// ==========================================
+exports.getFacebookCatalogFeed = async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query(`
+      SELECT 
+        p.ProductId AS productId,
+        p.ProductName AS productName,
+        p.SKU AS sku,
+        p.BasePrice AS basePrice,
+        p.SuggestedRetailPrice AS srp,
+        p.Brand AS brand,
+        p.Category AS category,
+        p.OwnershipType AS ownershipType,
+        p.FabricMaterial AS material,
+        p.FabricTexture AS texture,
+        p.FabricWidth AS width,
+        p.ThreadCount AS threadCount,
+        p.WeavingType AS weavingType,
+        p.SupplierNotes AS notes,
+        (
+          SELECT TOP 1 ImageUrl FROM dbo.ProductImages 
+          WHERE ProductId = p.ProductId 
+          ORDER BY IsPrimary DESC, ImageId ASC
+        ) AS imageUrl,
+        COALESCE(
+          (SELECT SUM(OnHandQty - ReservedQty) FROM dbo.InventoryLedgers WHERE ProductId = p.ProductId AND LedgerType = 'MASTER'), 0
+        ) AS availableQty
+      FROM dbo.Products p
+      WHERE p.Status = 'ACTIVE' AND p.QCStatus = 'APPROVED'
+    `);
+
+    const host = req.get('host') || 'localhost:5000';
+    const protocol = req.secure ? 'https' : 'http';
+    const storefrontUrl = process.env.STOREFRONT_URL || 'http://localhost:8080';
+
+    let xml = `<?xml version="1.0"?>\n`;
+    xml += `<rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">\n`;
+    xml += `  <channel>\n`;
+    xml += `    <title>BrandCreator Product Catalog</title>\n`;
+    xml += `    <link>${storefrontUrl}</link>\n`;
+    xml += `    <description>Dynamic Facebook Product Feed for BrandCreator Ecosystem (Fabrics &amp; Boutique Catalog)</description>\n`;
+
+    for (const p of result.recordset) {
+      const price = p.srp ? parseFloat(p.srp) : (p.basePrice ? parseFloat(p.basePrice) * 1.15 : 1000);
+      const formattedPrice = `${price.toFixed(2)} BDT`;
+      const availability = p.availableQty > 0 ? 'in stock' : 'out of stock';
+      
+      let pImg = p.imageUrl || '';
+      if (pImg && !pImg.startsWith('http') && !pImg.startsWith('https')) {
+        pImg = `${protocol}://${host}${pImg}`;
+      }
+
+      // Escape XML characters
+      const escapeXml = (str) => {
+        if (!str) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&apos;');
+      };
+
+      xml += `    <item>\n`;
+      xml += `      <g:id>${p.productId}</g:id>\n`;
+      xml += `      <g:title>${escapeXml(p.productName)}</g:title>\n`;
+      xml += `      <g:description>${escapeXml(p.notes || `${p.productName} in ${p.category || 'Boutique'}`)}</g:description>\n`;
+      xml += `      <g:link>${storefrontUrl}/shop?productId=${p.productId}</g:link>\n`;
+      if (pImg) xml += `      <g:image_link>${escapeXml(pImg)}</g:image_link>\n`;
+      xml += `      <g:brand>${escapeXml(p.brand || 'BrandCreator')}</g:brand>\n`;
+      xml += `      <g:condition>new</g:condition>\n`;
+      xml += `      <g:availability>${availability}</g:availability>\n`;
+      xml += `      <g:price>${formattedPrice}</g:price>\n`;
+      if (p.category) xml += `      <g:google_product_category>${escapeXml(p.category)}</g:google_product_category>\n`;
+      xml += `      <g:custom_label_0>${p.ownershipType}</g:custom_label_0>\n`;
+      if (p.material) xml += `      <g:custom_label_1>${escapeXml(p.material)}</g:custom_label_1>\n`;
+      if (p.texture) xml += `      <g:custom_label_2>${escapeXml(p.texture)}</g:custom_label_2>\n`;
+      if (p.width) xml += `      <g:custom_label_3>${escapeXml(p.width)}</g:custom_label_3>\n`;
+      xml += `    </item>\n`;
+    }
+
+    xml += `  </channel>\n`;
+    xml += `</rss>\n`;
+
+    res.header('Content-Type', 'text/xml');
+    res.send(xml);
   } catch (err) {
     res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
   }

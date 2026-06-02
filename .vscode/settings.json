@@ -9,6 +9,8 @@
     "upsert",
     "outbox",
     "webhook",
-    "bkash"
+    "bkash",
+    "brandcreator",
+    "trycloudflare"
   ]
 }

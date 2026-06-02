@@ -40,5 +40,7 @@ router.get('/inventory/transfers', requireRole(['SuperAdmin', 'Admin', 'Supplier
 router.post('/inventory/transfers/:id/approve', requireRole(['SuperAdmin', 'Admin']), inventoryController.approveTransfer);
 router.get('/inventory/transactions', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.getTransactions);
 router.get('/inventory/reconcile/:productId', requireRole(['SuperAdmin', 'Admin']), inventoryController.reconcileProduct);
+router.put('/products/:productId/images', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.updateProductImages);
+router.get('/catalog/fb-feed', inventoryController.getFacebookCatalogFeed);
 
 module.exports = router;

@@ -53,13 +53,15 @@ async function uploadCompressedProductImage(file, supplierEmail = 'supplier') {
       mimeType: 'image/webp',
       body: Readable.from(compressed)
     },
-    fields: 'id,name,webViewLink,webContentLink'
+    fields: 'id,name,webViewLink,webContentLink',
+    supportsAllDrives: true
   });
 
   const fileId = createRes.data.id;
 
   await drive.permissions.create({
     fileId,
+    supportsAllDrives: true,
     requestBody: {
       role: 'reader',
       type: 'anyone'

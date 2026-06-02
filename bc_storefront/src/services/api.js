@@ -1,6 +1,6 @@
 // src/services/api.js
 
-const DEFAULT_BACKEND_URL = 'http://localhost:5000';
+const DEFAULT_BACKEND_URL = 'http://100.110.252.19:5000';
 const VITE_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
 // Resolve clean base URL without trailing slash

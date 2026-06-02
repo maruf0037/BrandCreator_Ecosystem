@@ -69,7 +69,7 @@ async function runTest() {
     });
     const drive = google.drive({ version: 'v3', auth });
     
-    await drive.files.delete({ fileId: result.fileId });
+    await drive.files.delete({ fileId: result.fileId, supportsAllDrives: true });
     console.log('   -> Pass: Successfully deleted test file from Google Drive folder.\n');
 
     console.log('==================================================');

@@ -7,6 +7,7 @@ import {
   MapPin, Target, Megaphone, MessageCircle
 } from 'lucide-react';
 import { api } from '../services/api';
+import { commissionApi } from '../services/commissionApi';
 
 const adminDashboardStyles = `
   @keyframes fadeInUp {
@@ -205,6 +206,40 @@ export default function AdminDashboard({ currentUser }) {
   const [walletSummary, setWalletSummary] = useState(null);
   const [walletAuditReport, setWalletAuditReport] = useState(null);
   const [walletHistory, setWalletHistory] = useState([]);
+  
+  // Phase 2: Hybrid Model State
+  const [revenueSummary, setRevenueSummary] = useState(null);
+  const [revenueLoading, setRevenueLoading] = useState(false);
+  const [revenueProducts, setRevenueProducts] = useState([]);
+  const [revenueSuppliers, setRevenueSuppliers] = useState([]);
+  const [revenueTimeline, setRevenueTimeline] = useState([]);
+  const [revenueFilter, setRevenueFilter] = useState(''); // OWN vs SUPPLIER
+  const [campaignRoiStats, setCampaignRoiStats] = useState([]);
+
+  // UTM Generator State
+  const [utmGeneratorProductId, setUtmGeneratorProductId] = useState('');
+  const [utmGeneratorSource, setUtmGeneratorSource] = useState('');
+  const [utmGeneratedLink, setUtmGeneratedLink] = useState('');
+  const [utmCopied, setUtmCopied] = useState(false);
+  
+  const [commissionLedger, setCommissionLedger] = useState([]);
+  const [commissionSummary, setCommissionSummary] = useState(null);
+  const [commissionLoading, setCommissionLoading] = useState(false);
+  const [commissionFilters, setCommissionFilters] = useState({
+    supplierEmail: '',
+    status: '',
+    page: 1,
+    limit: 20
+  });
+  const [commissionRates, setCommissionRates] = useState([]);
+  const [commissionGlobalDefault, setCommissionGlobalDefault] = useState(10.00);
+  const [commissionRateForm, setCommissionRateForm] = useState({
+    supplierEmail: '',
+    category: '',
+    commissionRate: ''
+  });
+  const [settingRateLoading, setSettingRateLoading] = useState(false);
+
   const [topUpForm, setTopUpForm] = useState({
     txnType: 'ADMIN_TOP_UP',
     amount: '',
@@ -423,9 +458,61 @@ export default function AdminDashboard({ currentUser }) {
     }
   };
 
+  const fetchRevenueData = async () => {
+    setRevenueLoading(true);
+    try {
+      const [sum, prod, supp, time, roi] = await Promise.all([
+        commissionApi.getRevenueSummary(),
+        commissionApi.getRevenueByProduct(revenueFilter),
+        commissionApi.getRevenueBySupplier(),
+        commissionApi.getRevenueTimeline('daily'),
+        commissionApi.getCampaignRoiStats().catch(err => {
+          console.error('Error fetching campaign ROI stats, using fallback:', err);
+          return { items: [] };
+        })
+      ]);
+      setRevenueSummary(sum);
+      setRevenueProducts(prod.items || []);
+      setRevenueSuppliers(supp.items || []);
+      setRevenueTimeline(time.items || []);
+      setCampaignRoiStats(roi.items || []);
+    } catch (err) {
+      console.error('Error fetching revenue data:', err);
+    } finally {
+      setRevenueLoading(false);
+    }
+  };
+
+  const fetchCommissionData = async () => {
+    setCommissionLoading(true);
+    try {
+      const [ledg, rates, glob] = await Promise.all([
+        commissionApi.getCommissionLedger(commissionFilters),
+        commissionApi.getCommissionRates(),
+        commissionApi.getGlobalDefault()
+      ]);
+      setCommissionLedger(ledg.items || []);
+      setCommissionSummary(ledg.summary || null);
+      setCommissionRates(rates.items || []);
+      setCommissionGlobalDefault(glob.commissionRate || 10.00);
+    } catch (err) {
+      console.error('Error fetching commission data:', err);
+    } finally {
+      setCommissionLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchAllData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'revenue') {
+      fetchRevenueData();
+    } else if (activeTab === 'commissions') {
+      fetchCommissionData();
+    }
+  }, [activeTab, revenueFilter, commissionFilters]);
 
   const handleLogout = () => {
     window.location.href = `${backendUrl}/auth/logout`;
@@ -1026,6 +1113,26 @@ export default function AdminDashboard({ currentUser }) {
               >
                 <Layers size={18} style={{ color: 'hsl(var(--primary))' }} />
                 POS / Physical Sale
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => setActiveTab('revenue')} 
+                className={`sidebar-link w-full text-left ${activeTab === 'revenue' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <BarChart3 size={18} style={{ color: '#ec4899' }} />
+                Revenue Dashboard
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => setActiveTab('commissions')} 
+                className={`sidebar-link w-full text-left ${activeTab === 'commissions' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <DollarSign size={18} style={{ color: '#10b981' }} />
+                Commission Ledger
               </button>
             </li>
             <li>
@@ -2137,6 +2244,132 @@ export default function AdminDashboard({ currentUser }) {
                           {pricingSaving ? 'Saving pricing plan...' : 'Save Admin Pricing Plan'}
                         </button>
                       </form>
+                    </div>
+
+                    {/* Auto UTM Link Generator Widget */}
+                    <div className="glass-card-premium" style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{
+                          width: '48px', height: '48px', borderRadius: '16px', background: 'rgba(59, 130, 246, 0.12)',
+                          border: '1px solid rgba(59, 130, 246, 0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: 'hsl(var(--primary))'
+                        }}>
+                          <Megaphone size={22} />
+                        </div>
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: '1.12rem', color: '#fff' }}>Auto UTM Link Generator</h3>
+                          <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                            Create unique campaign links for targeted tracking & dynamic ads
+                          </p>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <span style={{ fontSize: '0.74rem', fontWeight: '850', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Select Target Product
+                          </span>
+                          <select
+                            value={utmGeneratorProductId}
+                            onChange={(e) => {
+                              setUtmGeneratorProductId(e.target.value);
+                              setUtmGeneratedLink('');
+                            }}
+                            className="styled-input"
+                          >
+                            <option value="">Select product to generate link</option>
+                            {pricingProducts.map((p) => (
+                              <option key={p.productId} value={p.productId}>
+                                {p.productName} ({p.sku})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <span style={{ fontSize: '0.74rem', fontWeight: '850', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Campaign Source / UTM Tag
+                          </span>
+                          <input
+                            type="text"
+                            value={utmGeneratorSource}
+                            onChange={(e) => {
+                              setUtmGeneratorSource(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''));
+                              setUtmGeneratedLink('');
+                            }}
+                            placeholder="e.g. FB-ADS-DHANMONDI"
+                            className="styled-input"
+                          />
+                          <span style={{ fontSize: '0.68rem', color: 'hsl(var(--text-muted))' }}>
+                            Alphanumeric with hyphens or underscores only. Auto-uppercased.
+                          </span>
+                        </label>
+
+                        {/* Presets */}
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+                          {['FB-ADS-DHANMONDI', 'FB-ADS-MIRPUR', 'FB-ADS-UTTARA', 'GOOGLE-SHOPPING', 'IG-INFLUENCER'].map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => {
+                                setUtmGeneratorSource(preset);
+                                setUtmGeneratedLink('');
+                              }}
+                              className="pill-badge pill-draft"
+                              style={{ border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer', transition: 'all 0.2s' }}
+                            >
+                              {preset}
+                            </button>
+                          ))}
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={!utmGeneratorProductId || !utmGeneratorSource}
+                          onClick={() => {
+                            const storeOrigin = window.location.origin;
+                            const generated = `${storeOrigin}/shop?productId=${utmGeneratorProductId}&utm_source=${utmGeneratorSource}`;
+                            setUtmGeneratedLink(generated);
+                            setUtmCopied(false);
+                          }}
+                          className="btn-secondary"
+                          style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '12px', marginTop: '4px' }}
+                        >
+                          <RefreshCw size={14} />
+                          Generate Campaign Link
+                        </button>
+
+                        {utmGeneratedLink && (
+                          <div style={{
+                            display: 'flex', flexDirection: 'column', gap: '10px', padding: '14px',
+                            background: 'rgba(59, 130, 246, 0.04)', border: '1px solid rgba(59, 130, 246, 0.16)', borderRadius: '16px',
+                            marginTop: '8px', animation: 'scaleIn 0.3s ease'
+                          }}>
+                            <div style={{ fontSize: '0.74rem', fontWeight: '850', color: 'hsl(var(--primary))', textTransform: 'uppercase' }}>
+                              Generated Campaign Tracking URL
+                            </div>
+                            <div style={{
+                              fontSize: '0.8rem', color: '#fff', wordBreak: 'break-all', fontFamily: 'monospace',
+                              background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)'
+                            }}>
+                              {utmGeneratedLink}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(utmGeneratedLink);
+                                setUtmCopied(true);
+                                setTimeout(() => setUtmCopied(false), 2000);
+                              }}
+                              className="btn-primary"
+                              style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '10px' }}
+                            >
+                              <Check size={14} style={{ display: utmCopied ? 'block' : 'none' }} />
+                              {utmCopied ? 'Copied successfully!' : 'Copy to Clipboard'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
@@ -3579,6 +3812,574 @@ export default function AdminDashboard({ currentUser }) {
                       )}
                     </div>
                   </div>
+                </div>
+              )}
+
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: REVENUE DASHBOARD */}
+              {activeTab === 'revenue' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }} className="tab-animation">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.75rem', fontWeight: '800', margin: 0, color: '#fff' }}>Revenue Analytics</h2>
+                      <p style={{ fontSize: '0.875rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>Real-time hybrid business model sales split & profitability breakdown</p>
+                    </div>
+                    <button 
+                      onClick={fetchRevenueData} 
+                      className="btn-secondary" 
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px' }}
+                      disabled={revenueLoading}
+                    >
+                      <RefreshCw size={14} className={revenueLoading ? 'spin-anim' : ''} />
+                      Sync Analytics
+                    </button>
+                  </div>
+
+                  {revenueLoading && !revenueSummary ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '100px 0' }}>
+                      <RefreshCw size={36} className="spin-anim" style={{ color: 'hsl(var(--primary))' }} />
+                    </div>
+                  ) : (
+                    <>
+                      {/* STATS OVERVIEW CARDS */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+                        <div className="glass-card-premium" style={{ borderLeft: '4px solid #fff' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'hsl(var(--text-secondary))', letterSpacing: '0.05em' }}>TOTAL GROSS SALES</span>
+                          <h3 style={{ fontSize: '1.75rem', fontWeight: '800', color: '#fff', margin: '8px 0 0 0' }}>
+                            ৳{Number(revenueSummary?.overview?.totalGrossRevenue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </h3>
+                        </div>
+
+                        <div className="glass-card-premium" style={{ borderLeft: '4px solid #ec4899' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#ec4899', letterSpacing: '0.05em' }}>DIRECT SALES (OWN)</span>
+                          <h3 style={{ fontSize: '1.75rem', fontWeight: '800', color: '#fff', margin: '8px 0 0 0' }}>
+                            ৳{Number(revenueSummary?.directSales?.grossRevenue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </h3>
+                          <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', display: 'block', marginTop: '6px' }}>
+                            {revenueSummary?.directSales?.revenueShare || 0}% share • {revenueSummary?.directSales?.orders || 0} orders
+                          </span>
+                        </div>
+
+                        <div className="glass-card-premium" style={{ borderLeft: '4px solid #10b981' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#10b981', letterSpacing: '0.05em' }}>MARKETPLACE SALES (SUPPLIER)</span>
+                          <h3 style={{ fontSize: '1.75rem', fontWeight: '800', color: '#fff', margin: '8px 0 0 0' }}>
+                            ৳{Number(revenueSummary?.commissionSales?.grossRevenue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </h3>
+                          <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', display: 'block', marginTop: '6px' }}>
+                            {revenueSummary?.commissionSales?.revenueShare || 0}% share • {revenueSummary?.commissionSales?.orders || 0} orders
+                          </span>
+                        </div>
+
+                        <div className="glass-card-premium" style={{ borderLeft: '4px solid hsl(var(--primary))' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'hsl(var(--primary))', letterSpacing: '0.05em' }}>NET PLATFORM PROFIT</span>
+                          <h3 style={{ fontSize: '1.75rem', fontWeight: '800', color: 'hsl(var(--primary))', margin: '8px 0 0 0' }}>
+                            ৳{Number(revenueSummary?.overview?.totalNetProfit || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </h3>
+                          <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', display: 'block', marginTop: '6px' }}>
+                            Earned Commission: ৳{Number(revenueSummary?.commissionSales?.commissionEarned || 0).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '24px' }}>
+                        {/* PRODUCT PERFORMANCE */}
+                        <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff' }}>Sales by Product</h3>
+                            <select 
+                              value={revenueFilter}
+                              onChange={(e) => setRevenueFilter(e.target.value)}
+                              className="styled-input"
+                              style={{ width: '160px', padding: '6px 12px', fontSize: '0.85rem' }}
+                            >
+                              <option value="">All Products</option>
+                              <option value="OWN">Direct (OWN)</option>
+                              <option value="SUPPLIER">Marketplace (SUPPLIER)</option>
+                            </select>
+                          </div>
+
+                          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }} className="styled-table">
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>PRODUCT NAME</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>SKU</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>OWNERSHIP</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>QTY SOLD</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>GROSS REVENUE</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>NET PROFIT</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {revenueProducts.length === 0 ? (
+                                <tr>
+                                  <td colSpan={6} style={{ padding: '40px', textStyle: 'italic', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>No product sales recorded yet.</td>
+                                </tr>
+                              ) : (
+                                revenueProducts.map(p => (
+                                  <tr key={p.productId} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)', verticalAlign: 'middle' }}>
+                                    <td style={{ padding: '12px 8px', fontWeight: '700', color: '#fff' }}>{p.productName}</td>
+                                    <td style={{ padding: '12px 8px', fontSize: '0.85rem' }}>{p.sku}</td>
+                                    <td style={{ padding: '12px 8px' }}>
+                                      <span style={{
+                                        fontSize: '0.75rem',
+                                        padding: '3px 8px',
+                                        borderRadius: '6px',
+                                        fontWeight: '700',
+                                        background: p.ownershipType === 'OWN' ? 'rgba(236,72,153,0.1)' : 'rgba(16,185,129,0.1)',
+                                        color: p.ownershipType === 'OWN' ? '#ec4899' : '#10b981',
+                                        border: p.ownershipType === 'OWN' ? '1px solid rgba(236,72,153,0.2)' : '1px solid rgba(16,185,129,0.2)'
+                                      }}>{p.ownershipType}</span>
+                                    </td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right' }}>{p.totalQty}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700', color: '#fff' }}>৳{Number(p.grossRevenue).toFixed(2)}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700', color: 'hsl(var(--primary))' }}>৳{Number(p.netProfit).toFixed(2)}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* SUPPLIER PERFORMANCE */}
+                        <div className="glass-card" style={{ padding: '24px' }}>
+                          <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', marginBottom: '20px' }}>Supplier Rankings</h3>
+                          
+                          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }} className="styled-table">
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>SUPPLIER</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>SALES</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>COMMISSION</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>PAYABLE</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {revenueSuppliers.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} style={{ padding: '40px', textStyle: 'italic', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>No active suppliers found.</td>
+                                </tr>
+                              ) : (
+                                revenueSuppliers.map(s => (
+                                  <tr key={s.supplierEmail} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                    <td style={{ padding: '12px 8px', fontWeight: '600', color: '#fff', fontSize: '0.85rem' }}>{s.supplierEmail}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700' }}>৳{Number(s.totalSales).toFixed(2)}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', color: '#10b981', fontWeight: '700' }}>৳{Number(s.totalCommission).toFixed(2)}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontSize: '0.85rem' }}>৳{Number(s.totalPayable).toFixed(2)}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* CAMPAIGN ROI ANALYTICS */}
+                      <div className="glass-card" style={{ padding: '24px', marginTop: '24px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                          <div>
+                            <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Target size={20} style={{ color: 'hsl(var(--primary))' }} />
+                              Campaign Attribution & ROI Stats
+                            </h3>
+                            <p style={{ fontSize: '0.8rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>
+                              Real-time conversion tracking & ROAS efficiency derived from dynamic UTM tags
+                            </p>
+                          </div>
+                        </div>
+
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }} className="styled-table">
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>CAMPAIGN SOURCE (UTM)</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>ATTRIBUTED ORDERS</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>UNITS SOLD</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>GROSS REVENUE</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>NET PLATFORM PROFIT</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>ESTIMATED ROAS TIER</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {campaignRoiStats.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} style={{ padding: '45px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
+                                  No UTM campaigns captured yet. Generate link and run target ads to track ROI!
+                                </td>
+                              </tr>
+                            ) : (
+                              campaignRoiStats.map((item, idx) => {
+                                const profitPercent = item.grossRevenue > 0 ? (item.netPlatformProfit / item.grossRevenue) * 100 : 0;
+                                let roasLabel = 'Tier 3 (Retargeting ROAS)';
+                                let roasClass = 'pill-rejected';
+                                if (profitPercent >= 10) {
+                                  roasLabel = 'Tier 1 (High ROAS: 3.5x+)';
+                                  roasClass = 'pill-approved';
+                                } else if (profitPercent >= 5) {
+                                  roasLabel = 'Tier 2 (Moderate: 2.0x+)';
+                                  roasClass = 'pill-pending';
+                                }
+                                
+                                return (
+                                  <tr key={item.utmSource || idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                    <td style={{ padding: '12px 8px', fontWeight: '700', color: '#fff' }}>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.12)', padding: '4px 10px', borderRadius: '8px', color: 'hsl(var(--primary))' }}>
+                                        {item.utmSource || 'Organic / Direct'}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: '600' }}>{item.totalOrders}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'center' }}>{item.unitsSold}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700', color: '#fff' }}>৳{Number(item.grossRevenue).toFixed(2)}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700', color: '#10b981' }}>৳{Number(item.netPlatformProfit).toFixed(2)}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                                      <span className={`pill-badge ${roasClass}`} style={{ fontSize: '0.7rem' }}>
+                                        {roasLabel}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* TAB: COMMISSION LEDGER */}
+              {activeTab === 'commissions' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }} className="tab-animation">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.75rem', fontWeight: '800', margin: 0, color: '#fff' }}>Marketplace Commission Ledger</h2>
+                      <p style={{ fontSize: '0.875rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>Manage supplier sales payouts, ledger balances, and custom rates</p>
+                    </div>
+                    <button 
+                      onClick={fetchCommissionData} 
+                      className="btn-secondary" 
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px' }}
+                      disabled={commissionLoading}
+                    >
+                      <RefreshCw size={14} className={commissionLoading ? 'spin-anim' : ''} />
+                      Sync Ledger
+                    </button>
+                  </div>
+
+                  {commissionLoading && commissionLedger.length === 0 ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '100px 0' }}>
+                      <RefreshCw size={36} className="spin-anim" style={{ color: 'hsl(var(--primary))' }} />
+                    </div>
+                  ) : (
+                    <>
+                      {/* STATS PANELS */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+                        <div className="glass-card" style={{ padding: '20px' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', fontWeight: '700' }}>SUPPLIER SALES</span>
+                          <h4 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#fff', margin: '6px 0 0 0' }}>
+                            ৳{Number(commissionSummary?.totalSales || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </h4>
+                          <span style={{ fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', display: 'block', marginTop: '4px' }}>
+                            From {commissionSummary?.totalEntries || 0} items
+                          </span>
+                        </div>
+
+                        <div className="glass-card" style={{ padding: '20px' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: '700' }}>COMMISSIONS EARNED</span>
+                          <h4 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#10b981', margin: '6px 0 0 0' }}>
+                            ৳{Number(commissionSummary?.totalCommission || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </h4>
+                          <span style={{ fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', display: 'block', marginTop: '4px' }}>
+                            Avg rate resolved dynamically
+                          </span>
+                        </div>
+
+                        <div className="glass-card" style={{ padding: '20px' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'hsl(var(--primary))', fontWeight: '700' }}>PENDING PAYABLE (DUE)</span>
+                          <h4 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'hsl(var(--primary))', margin: '6px 0 0 0' }}>
+                            ৳{Number(commissionSummary?.pendingCommission || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </h4>
+                          <span style={{ fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', display: 'block', marginTop: '4px' }}>
+                            Requires admin mark paid
+                          </span>
+                        </div>
+
+                        <div className="glass-card" style={{ padding: '20px' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#3b82f6', fontWeight: '700' }}>PAID OUT TO SUPPLIERS</span>
+                          <h4 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#3b82f6', margin: '6px 0 0 0' }}>
+                            ৳{Number(commissionSummary?.paidCommission || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </h4>
+                          <span style={{ fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', display: 'block', marginTop: '4px' }}>
+                            Setted manual balance ledger
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '24px' }}>
+                        {/* GLOBAL DEFAULT & OVERRIDES RULES MANAGER */}
+                        <div className="glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                          <div>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', margin: 0 }}>Waterfall Commission Settings</h3>
+                            <p style={{ fontSize: '0.8rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>Configure default rates and supplier/category exceptions</p>
+                          </div>
+
+                          {/* Global settings config */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+                            <div>
+                              <div style={{ fontSize: '0.875rem', fontWeight: '700', color: '#fff' }}>Global Default Commission Rate</div>
+                              <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', marginTop: '2px' }}>Applies if no other override matching is resolved</div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <input 
+                                type="number" 
+                                value={commissionGlobalDefault} 
+                                onChange={async (e) => {
+                                  const val = parseFloat(e.target.value);
+                                  setCommissionGlobalDefault(e.target.value);
+                                  if (!isNaN(val) && val >= 0 && val <= 100) {
+                                    await commissionApi.updateGlobalDefault(val);
+                                  }
+                                }}
+                                className="styled-input" 
+                                style={{ width: '80px', padding: '6px 12px', textAlign: 'center', fontWeight: '700' }}
+                              />
+                              <span style={{ fontWeight: '700', color: '#fff' }}>%</span>
+                            </div>
+                          </div>
+
+                          {/* Rule Addition Form */}
+                          <form onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (!commissionRateForm.supplierEmail || !commissionRateForm.commissionRate) return;
+                            setSettingRateLoading(true);
+                            try {
+                              await commissionApi.setCommissionRate(commissionRateForm);
+                              setCommissionRateForm({ supplierEmail: '', category: '', commissionRate: '' });
+                              fetchCommissionData();
+                            } catch (err) {
+                              console.error(err);
+                            } finally {
+                              setSettingRateLoading(false);
+                            }
+                          }} style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                            <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#fff' }}>Add Custom Commission Override Rule</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '12px' }}>
+                              <input 
+                                type="email" 
+                                placeholder="Supplier Email" 
+                                value={commissionRateForm.supplierEmail}
+                                onChange={(e) => setCommissionRateForm({ ...commissionRateForm, supplierEmail: e.target.value })}
+                                className="styled-input" 
+                                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                                required
+                              />
+                              <input 
+                                type="text" 
+                                placeholder="Category (Optional)" 
+                                value={commissionRateForm.category}
+                                onChange={(e) => setCommissionRateForm({ ...commissionRateForm, category: e.target.value })}
+                                className="styled-input" 
+                                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                              />
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <input 
+                                  type="number" 
+                                  placeholder="Rate" 
+                                  value={commissionRateForm.commissionRate}
+                                  onChange={(e) => setCommissionRateForm({ ...commissionRateForm, commissionRate: e.target.value })}
+                                  className="styled-input" 
+                                  style={{ padding: '6px 12px', fontSize: '0.8rem', width: '70px', textAlign: 'center' }}
+                                  required
+                                  min="0"
+                                  max="100"
+                                />
+                                <span style={{ color: 'hsl(var(--text-muted))', fontSize: '0.85rem' }}>%</span>
+                              </div>
+                            </div>
+                            <button type="submit" disabled={settingRateLoading} className="btn-primary" style={{ padding: '8px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {settingRateLoading ? 'Saving...' : 'Add Rule'}
+                            </button>
+                          </form>
+                        </div>
+
+                        {/* ACTIVE RULES LIST */}
+                        <div className="glass-card" style={{ padding: '24px', overflowY: 'auto', maxHeight: '420px' }}>
+                          <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', marginBottom: '16px' }}>Active Commission Overrides</h3>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }} className="styled-table">
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                                <th style={{ padding: '10px 6px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>SUPPLIER</th>
+                                <th style={{ padding: '10px 6px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>CATEGORY</th>
+                                <th style={{ padding: '10px 6px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>RATE</th>
+                                <th style={{ padding: '10px 6px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>ACTION</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {commissionRates.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} style={{ padding: '30px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontSize: '0.85rem' }}>No override rules defined yet.</td>
+                                </tr>
+                              ) : (
+                                commissionRates.map(r => (
+                                  <tr key={r.rateId} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                    <td style={{ padding: '10px 6px', fontSize: '0.8rem', color: '#fff' }}>{r.supplierEmail}</td>
+                                    <td style={{ padding: '10px 6px', fontSize: '0.8rem' }}>{r.category || <span style={{ color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>Global</span>}</td>
+                                    <td style={{ padding: '10px 6px', textAlign: 'right', fontWeight: '700', color: '#10b981' }}>{r.commissionRate}%</td>
+                                    <td style={{ padding: '10px 6px', textAlign: 'center' }}>
+                                      <button 
+                                        onClick={async () => {
+                                          await commissionApi.deactivateCommissionRate(r.rateId);
+                                          fetchCommissionData();
+                                        }}
+                                        style={{ background: 'none', border: 'none', color: '#ea4335', padding: '4px', cursor: 'pointer' }}
+                                        title="Delete rule"
+                                      >
+                                        <X size={14} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* TRANSACTIONS LEDGER */}
+                      <div className="glass-card" style={{ padding: '24px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                          <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', margin: 0 }}>Ledger Postings</h3>
+                          
+                          {/* Filters */}
+                          <div style={{ display: 'flex', gap: '12px' }}>
+                            <input 
+                              type="text" 
+                              placeholder="Search Supplier Email" 
+                              value={commissionFilters.supplierEmail}
+                              onChange={(e) => setCommissionFilters({ ...commissionFilters, supplierEmail: e.target.value })}
+                              className="styled-input" 
+                              style={{ width: '220px', padding: '6px 12px', fontSize: '0.85rem' }}
+                            />
+                            <select
+                              value={commissionFilters.status}
+                              onChange={(e) => setCommissionFilters({ ...commissionFilters, status: e.target.value })}
+                              className="styled-input"
+                              style={{ width: '130px', padding: '6px 12px', fontSize: '0.85rem' }}
+                            >
+                              <option value="">All Statuses</option>
+                              <option value="PENDING">PENDING</option>
+                              <option value="PAID">PAID</option>
+                              <option value="CANCELLED">CANCELLED</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }} className="styled-table">
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>ORDER REF</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>PRODUCT</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>SUPPLIER</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>SALE AMOUNT</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>COMMISSION RATE</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>COMMISSION AMOUNT</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>SUPPLIER PAYABLE</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>STATUS</th>
+                              <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>ACTION</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {commissionLedger.length === 0 ? (
+                              <tr>
+                                <td colSpan={9} style={{ padding: '40px', textStyle: 'italic', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>No ledger entries matching criteria.</td>
+                              </tr>
+                            ) : (
+                              commissionLedger.map(item => (
+                                <tr key={item.entryId} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                  <td style={{ padding: '12px 8px', fontWeight: '700', color: '#fff' }}>{item.orderRef}</td>
+                                  <td style={{ padding: '12px 8px', fontSize: '0.85rem' }}>{item.productName}</td>
+                                  <td style={{ padding: '12px 8px', fontSize: '0.8rem', color: 'hsl(var(--text-muted))' }}>{item.supplierEmail}</td>
+                                  <td style={{ padding: '12px 8px', textAlign: 'right' }}>৳{Number(item.saleAmount).toFixed(2)}</td>
+                                  <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '600' }}>{item.commissionRate}%</td>
+                                  <td style={{ padding: '12px 8px', textAlign: 'right', color: '#10b981', fontWeight: '700' }}>৳{Number(item.commissionAmount).toFixed(2)}</td>
+                                  <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700', color: '#fff' }}>৳{Number(item.supplierPayable).toFixed(2)}</td>
+                                  <td style={{ padding: '12px 8px' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                      <span style={{
+                                        fontSize: '0.75rem',
+                                        padding: '3px 8px',
+                                        borderRadius: '6px',
+                                        fontWeight: '700',
+                                        background: item.status === 'PAID' ? 'rgba(16,185,129,0.1)' : item.status === 'PENDING' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                        color: item.status === 'PAID' ? '#10b981' : item.status === 'PENDING' ? '#f59e0b' : '#ef4444',
+                                        border: item.status === 'PAID' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'PENDING' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)',
+                                        width: 'fit-content'
+                                      }}>{item.status}</span>
+                                      
+                                      {item.status === 'PENDING' && (
+                                        <span style={{
+                                          fontSize: '0.68rem',
+                                          padding: '2px 6px',
+                                          borderRadius: '4px',
+                                          fontWeight: '700',
+                                          background: item.isLocked ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.1)',
+                                          color: item.isLocked ? '#ef4444' : '#10b981',
+                                          border: item.isLocked ? '1px solid rgba(239,68,68,0.2)' : '1px solid rgba(16,185,129,0.2)',
+                                          width: 'fit-content',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px'
+                                        }}>
+                                          {item.isLocked ? '🔒 LOCKED (7d Window)' : '🔑 RELEASED'}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                                    {item.status === 'PENDING' && (
+                                      <button 
+                                        disabled={item.isLocked}
+                                        onClick={async () => {
+                                          try {
+                                            await commissionApi.markCommissionPaid(item.entryId);
+                                            fetchCommissionData();
+                                            setActionSuccess('Payout marked as PAID successfully!');
+                                            setTimeout(() => setActionSuccess(''), 3000);
+                                          } catch (err) {
+                                            setError(err.message || 'Payout settlement failed.');
+                                          }
+                                        }}
+                                        className="btn-primary" 
+                                        style={{ 
+                                          padding: '5px 10px', 
+                                          fontSize: '0.75rem', 
+                                          background: item.isLocked ? '#4b5563' : '#10b981', 
+                                          borderColor: item.isLocked ? '#4b5563' : '#10b981',
+                                          cursor: item.isLocked ? 'not-allowed' : 'pointer',
+                                          opacity: item.isLocked ? 0.6 : 1
+                                        }}
+                                      >
+                                        {item.isLocked ? 'Locked' : 'Mark Paid'}
+                                      </button>
+                                    )}
+                                    {item.status === 'PAID' && (
+                                      <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
+                                        Paid at {new Date(item.paidAt).toLocaleDateString()}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

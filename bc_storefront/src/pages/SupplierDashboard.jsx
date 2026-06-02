@@ -4,9 +4,10 @@ import { useState, useEffect } from 'react';
 import { 
   Package, HardDrive, KeyRound, CheckCircle, 
   BarChart, PlusCircle, LogOut, RefreshCw, Send, Check, X, 
-  AlertCircle, History, Upload
+  AlertCircle, History, Upload, Image as ImageIcon, ArrowLeft, ArrowRight, Star, Trash2
 } from 'lucide-react';
 import { api } from '../services/api';
+import { commissionApi } from '../services/commissionApi';
 
 export default function SupplierDashboard({ currentUser }) {
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
@@ -18,6 +19,13 @@ export default function SupplierDashboard({ currentUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState('');
+
+  // Phase 2: Supplier Commission States
+  const [commissionSummary, setCommissionSummary] = useState(null);
+  const [commissionRecent, setCommissionRecent] = useState([]);
+  const [commissionLoading, setCommissionLoading] = useState(false);
+  const [commissionCurrentRate, setCommissionCurrentRate] = useState(null);
+  const [commissionSupplier, setCommissionSupplier] = useState(null);
 
   // Key secrets state
   const [apiKey, setApiKey] = useState('');
@@ -39,9 +47,19 @@ export default function SupplierDashboard({ currentUser }) {
   const [newDeliveryCoverageJson, setNewDeliveryCoverageJson] = useState('');
   const [newOnlineSellingRequested, setNewOnlineSellingRequested] = useState(true);
   const [newImageUrl, setNewImageUrl] = useState('');
+  const [newImages, setNewImages] = useState([]); // Array of { imageUrl, isPrimary, altText }
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageUploadMeta, setImageUploadMeta] = useState(null);
   const [creating, setCreating] = useState(false);
+
+  // Existing product images modal states
+  const [editingImagesProductId, setEditingImagesProductId] = useState(null);
+  const [editingImagesProductName, setEditingImagesProductName] = useState('');
+  const [editingImagesList, setEditingImagesList] = useState([]); // Array of { imageUrl, isPrimary, altText }
+  const [editingUploadLoading, setEditingUploadLoading] = useState(false);
+  const [editingDragOver, setEditingDragOver] = useState(false);
 
   // Transfer Request Form State
   const [transferProductId, setTransferProductId] = useState(null);
@@ -77,9 +95,29 @@ export default function SupplierDashboard({ currentUser }) {
     }
   };
 
+  const fetchCommissionData = async () => {
+    setCommissionLoading(true);
+    try {
+      const data = await commissionApi.getSupplierCommissionSummary();
+      setCommissionSummary(data.summary || null);
+      setCommissionRecent(data.recentEntries || []);
+      setCommissionCurrentRate(data.currentRate || null);
+    } catch (err) {
+      console.error('Failed to load supplier commissions:', err);
+    } finally {
+      setCommissionLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchSupplierData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'commissions') {
+      fetchCommissionData();
+    }
+  }, [activeTab]);
 
   const handleLogout = () => {
     window.location.href = `${backendUrl}/auth/logout`;
@@ -122,7 +160,8 @@ export default function SupplierDashboard({ currentUser }) {
         supplierLocation: newSupplierLocation.trim() || null,
         deliveryCoverageJson: newDeliveryCoverageJson.trim() || null,
         onlineSellingRequested: newOnlineSellingRequested,
-        imageUrl: newImageUrl.trim() || null
+        imageUrl: newImageUrl.trim() || null,
+        images: newImages
       });
       showToast(`Product ${newProductName} initialized and double ledgers registered!`);
       setNewSku('');
@@ -140,6 +179,7 @@ export default function SupplierDashboard({ currentUser }) {
       setNewDeliveryCoverageJson('');
       setNewOnlineSellingRequested(true);
       setNewImageUrl('');
+      setNewImages([]);
       setImageUploadMeta(null);
       fetchSupplierData();
     } catch (err) {
@@ -149,26 +189,160 @@ export default function SupplierDashboard({ currentUser }) {
     }
   };
 
-  const handleProductImageUpload = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  // Multi-Image Upload logic
+  const uploadFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    
     setUploadingImage(true);
-    setImageUploadMeta(null);
+    setError(null);
+    setUploadProgress(`Compressing & processing ${files.length} image(s)...`);
+
+    try {
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) {
+        formData.append('image', files[i]);
+      }
+
+      const result = await api.upload('/api/uploads/product-image', formData);
+      const uploadedImages = result.images || [result];
+      
+      const newItems = uploadedImages.map((img, idx) => ({
+        imageUrl: img.imageUrl,
+        isPrimary: newImages.length === 0 && idx === 0,
+        altText: 'Product Image'
+      }));
+
+      setNewImages(prev => {
+        const combined = [...prev, ...newItems];
+        const hasPrimary = combined.some(item => item.isPrimary);
+        if (!hasPrimary && combined.length > 0) {
+          combined[0].isPrimary = true;
+        }
+        return combined;
+      });
+
+      showToast(`Processed and compressed ${newItems.length} image(s) successfully.`);
+    } catch (err) {
+      setError(err.message || 'Image processing or upload failed.');
+    } finally {
+      setUploadingImage(false);
+      setUploadProgress(null);
+    }
+  };
+
+  // Handle drag drop events for new product form
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const files = e.dataTransfer?.files;
+    if (files) {
+      uploadFiles(files);
+    }
+  };
+
+  const handleProductImageUpload = async (event) => {
+    const files = event.target.files;
+    if (files) {
+      uploadFiles(files);
+    }
+    event.target.value = '';
+  };
+
+  // Gallery management actions helper
+  const handleSetPrimary = (index, list, setList) => {
+    const updated = list.map((img, idx) => ({
+      ...img,
+      isPrimary: idx === index
+    }));
+    setList(updated);
+  };
+
+  const handleDeleteImage = (index, list, setList) => {
+    const updated = list.filter((_, idx) => idx !== index);
+    if (list[index]?.isPrimary && updated.length > 0) {
+      updated[0].isPrimary = true;
+    }
+    setList(updated);
+  };
+
+  const handleMoveImage = (index, direction, list, setList) => {
+    if (index === 0 && direction === -1) return;
+    if (index === list.length - 1 && direction === 1) return;
+    
+    const updated = [...list];
+    const targetIdx = index + direction;
+    const temp = updated[index];
+    updated[index] = updated[targetIdx];
+    updated[targetIdx] = temp;
+    
+    setList(updated);
+  };
+
+  // Existing product images modal functions
+  const handleOpenManageImagesModal = (product) => {
+    setEditingImagesProductId(product.productId);
+    setEditingImagesProductName(product.productName);
+    setEditingImagesList(product.images || []);
+    setError(null);
+  };
+
+  const uploadFilesForExistingProduct = async (files) => {
+    if (!files || files.length === 0 || !editingImagesProductId) return;
+    
+    setEditingUploadLoading(true);
     setError(null);
 
     try {
       const formData = new FormData();
-      formData.append('image', file);
+      for (let i = 0; i < files.length; i++) {
+        formData.append('image', files[i]);
+      }
+
       const result = await api.upload('/api/uploads/product-image', formData);
-      setNewImageUrl(result.imageUrl);
-      setImageUploadMeta(result);
-      showToast('Image compressed, uploaded to Google Drive, and linked automatically.');
+      const uploadedImages = result.images || [result];
+      
+      const newItems = uploadedImages.map((img, idx) => ({
+        imageUrl: img.imageUrl,
+        isPrimary: editingImagesList.length === 0 && idx === 0,
+        altText: 'Product Image'
+      }));
+
+      setEditingImagesList(prev => {
+        const combined = [...prev, ...newItems];
+        const hasPrimary = combined.some(item => item.isPrimary);
+        if (!hasPrimary && combined.length > 0) {
+          combined[0].isPrimary = true;
+        }
+        return combined;
+      });
+
+      showToast(`Added ${newItems.length} image(s) to product gallery.`);
     } catch (err) {
-      setError(err.message || 'Image upload failed. Check Google Drive configuration.');
+      setError(err.message || 'Failed to upload images.');
     } finally {
-      setUploadingImage(false);
-      event.target.value = '';
+      setEditingUploadLoading(false);
+    }
+  };
+
+  const handleSaveProductImages = async () => {
+    if (!editingImagesProductId) return;
+    try {
+      await api.put(`/api/products/${editingImagesProductId}/images`, { images: editingImagesList });
+      showToast('Product gallery updated successfully.');
+      setEditingImagesProductId(null);
+      setEditingImagesList([]);
+      fetchSupplierData();
+    } catch (err) {
+      setError(err.message || 'Failed to save product images.');
     }
   };
 
@@ -496,6 +670,16 @@ export default function SupplierDashboard({ currentUser }) {
             </li>
             <li>
               <button 
+                onClick={() => setActiveTab('commissions')} 
+                className={`sidebar-link w-full text-left ${activeTab === 'commissions' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <PlusCircle size={18} style={{ color: '#10b981' }} />
+                My Commissions
+              </button>
+            </li>
+            <li>
+              <button 
                 onClick={() => setActiveTab('byok')} 
                 className={`sidebar-link w-full text-left ${activeTab === 'byok' ? 'active' : ''}`}
                 style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
@@ -637,37 +821,185 @@ export default function SupplierDashboard({ currentUser }) {
                               className="styled-input"
                             />
                           </div>
-                          <div>
-                            <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>PRODUCT IMAGE</label>
-                            <label className="btn-secondary" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: uploadingImage ? 'wait' : 'pointer', marginBottom: '10px', opacity: uploadingImage ? 0.7 : 1 }}>
-                              {uploadingImage ? <RefreshCw size={16} className="spin-anim" /> : <Upload size={16} />}
-                              {uploadingImage ? 'Compressing + uploading...' : 'Upload to Google Drive'}
-                              <input
-                                type="file"
-                                accept="image/png,image/jpeg,image/webp"
-                                onChange={handleProductImageUpload}
-                                disabled={uploadingImage}
-                                style={{ display: 'none' }}
-                              />
-                            </label>
-                            <input 
-                              type="text"
-                              value={newImageUrl}
-                              onChange={(e) => setNewImageUrl(e.target.value)}
-                              placeholder="Upload image or paste image URL"
-                              className="styled-input"
-                            />
-                            {newImageUrl && (
-                              <div style={{ marginTop: '10px', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', overflow: 'hidden', background: 'rgba(255,255,255,0.03)' }}>
-                                <img src={newImageUrl} alt="Product preview" style={{ width: '100%', height: '150px', objectFit: 'cover', display: 'block' }} />
-                              </div>
-                            )}
-                            {imageUploadMeta && (
-                              <p style={{ marginTop: '8px', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
-                                Saved to Drive as compressed WebP. Size: {Math.round((imageUploadMeta.compressedSize || 0) / 1024)} KB.
-                              </p>
-                            )}
-                          </div>
+                          <div style={{ gridColumn: '1 / -1' }}>
+                             <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>PRODUCT GALLERY IMAGES</label>
+                             
+                             {/* Glassmorphic Drag & Drop zone */}
+                             <div 
+                               onDragOver={handleDragOver}
+                               onDragLeave={handleDragLeave}
+                               onDrop={handleDrop}
+                               style={{
+                                 border: isDragOver ? '2px dashed hsl(var(--primary))' : '2px dashed rgba(255,255,255,0.12)',
+                                 borderRadius: '16px',
+                                 padding: '36px 20px',
+                                 textAlign: 'center',
+                                 background: isDragOver ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0,0,0,0.18)',
+                                 boxShadow: isDragOver ? '0 0 24px hsl(var(--primary) / 0.1)' : 'none',
+                                 transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
+                                 cursor: uploadingImage ? 'wait' : 'pointer',
+                                 position: 'relative',
+                                 backdropFilter: 'blur(8px)'
+                               }}
+                             >
+                               <input
+                                 type="file"
+                                 multiple
+                                 accept="image/png,image/jpeg,image/webp"
+                                 onChange={handleProductImageUpload}
+                                 disabled={uploadingImage}
+                                 style={{
+                                   position: 'absolute',
+                                   top: 0, left: 0, width: '100%', height: '100%',
+                                   opacity: 0, cursor: 'pointer'
+                                 }}
+                               />
+                               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
+                                 <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'hsl(var(--secondary))' }}>
+                                   {uploadingImage ? <RefreshCw className="spin-anim" size={20} /> : <Upload size={20} />}
+                                 </div>
+                                 <div>
+                                   <h5 style={{ fontSize: '0.9rem', fontWeight: '700', marginBottom: '6px', color: '#fff' }}>
+                                     {uploadingImage ? 'Processing files...' : 'Drag & drop product images here, or click to browse'}
+                                   </h5>
+                                   <p style={{ fontSize: '0.78rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
+                                     {uploadingImage ? uploadProgress : 'Supports PNG, JPG, or WEBP (up to 10 files, automated WebP compression & Local Fallback)'}
+                                   </p>
+                                 </div>
+                               </div>
+                             </div>
+
+                             {/* Fallback Paste Input */}
+                             <div style={{ marginTop: '12px' }}>
+                               <input 
+                                 type="text"
+                                 placeholder="Or paste external image URL and press Enter to add..."
+                                 className="styled-input"
+                                 onKeyDown={(e) => {
+                                   if (e.key === 'Enter') {
+                                     e.preventDefault();
+                                     const val = e.target.value.trim();
+                                     if (val) {
+                                       setNewImages(prev => [
+                                         ...prev, 
+                                         { imageUrl: val, isPrimary: prev.length === 0, altText: 'Product Image' }
+                                       ]);
+                                       e.target.value = '';
+                                       showToast('External image URL linked successfully.');
+                                     }
+                                   }
+                                 }}
+                               />
+                             </div>
+
+                             {/* Interactive Gallery Thumbnails */}
+                             {newImages.length > 0 && (
+                               <div style={{ marginTop: '20px' }}>
+                                 <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                   Product Gallery Items ({newImages.length})
+                                 </label>
+                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '16px' }}>
+                                   {newImages.map((img, idx) => (
+                                     <div 
+                                       key={idx} 
+                                       style={{
+                                         position: 'relative',
+                                         borderRadius: '12px',
+                                         border: img.isPrimary ? '1px solid hsl(var(--primary))' : '1px solid rgba(255,255,255,0.06)',
+                                         overflow: 'hidden',
+                                         background: 'rgba(13, 17, 24, 0.7)',
+                                         boxShadow: img.isPrimary ? '0 4px 15px rgba(16, 185, 129, 0.15)' : '0 4px 12px rgba(0,0,0,0.2)',
+                                         transition: 'all 0.25s ease'
+                                       }}
+                                     >
+                                       <img src={img.imageUrl.startsWith('/uploads') ? `${backendUrl}${img.imageUrl}` : img.imageUrl} alt={img.altText} style={{ width: '100%', height: '110px', objectFit: 'cover' }} />
+                                       
+                                       {/* Primary star label overlay */}
+                                       {img.isPrimary && (
+                                         <span style={{
+                                           position: 'absolute', top: '6px', left: '6px',
+                                           background: 'hsl(var(--primary))', color: 'hsl(var(--bg-dark))',
+                                           fontSize: '0.62rem', fontWeight: '900', padding: '2px 6px', borderRadius: '4px',
+                                           display: 'flex', alignItems: 'center', gap: '3px', boxShadow: '0 2px 6px rgba(0,0,0,0.3)'
+                                         }}>
+                                           <Star size={8} fill="currentColor" /> Primary
+                                         </span>
+                                       )}
+
+                                       {/* Delete button overlay */}
+                                       <div style={{ position: 'absolute', top: '6px', right: '6px' }}>
+                                         <button
+                                           type="button"
+                                           onClick={() => handleDeleteImage(idx, newImages, setNewImages)}
+                                           style={{
+                                             width: '22px', height: '22px', borderRadius: '4px',
+                                             background: 'rgba(234, 67, 53, 0.85)', border: 'none', color: '#fff',
+                                             display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                                             transition: 'background 0.2s'
+                                           }}
+                                           title="Delete Image"
+                                         >
+                                           <Trash2 size={11} />
+                                         </button>
+                                       </div>
+
+                                       {/* Navigation & Action Footer */}
+                                       <div style={{
+                                         padding: '6px',
+                                         background: 'rgba(9, 13, 20, 0.9)',
+                                         display: 'flex',
+                                         alignItems: 'center',
+                                         justifyContent: 'space-between',
+                                         borderTop: '1px solid rgba(255,255,255,0.06)'
+                                       }}>
+                                         <div style={{ display: 'flex', gap: '4px' }}>
+                                           <button
+                                             type="button"
+                                             disabled={idx === 0}
+                                             onClick={() => handleMoveImage(idx, -1, newImages, setNewImages)}
+                                             style={{
+                                               width: '18px', height: '18px', borderRadius: '3px',
+                                               background: 'rgba(255,255,255,0.05)', border: 'none', color: '#fff',
+                                               display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: idx === 0 ? 'not-allowed' : 'pointer',
+                                               opacity: idx === 0 ? 0.3 : 0.8
+                                             }}
+                                           >
+                                             <ArrowLeft size={10} />
+                                           </button>
+                                           <button
+                                             type="button"
+                                             disabled={idx === newImages.length - 1}
+                                             onClick={() => handleMoveImage(idx, 1, newImages, setNewImages)}
+                                             style={{
+                                               width: '18px', height: '18px', borderRadius: '3px',
+                                               background: 'rgba(255,255,255,0.05)', border: 'none', color: '#fff',
+                                               display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: idx === newImages.length - 1 ? 'not-allowed' : 'pointer',
+                                               opacity: idx === newImages.length - 1 ? 0.3 : 0.8
+                                             }}
+                                           >
+                                             <ArrowRight size={10} />
+                                           </button>
+                                         </div>
+
+                                         {!img.isPrimary && (
+                                           <button
+                                             type="button"
+                                             onClick={() => handleSetPrimary(idx, newImages, setNewImages)}
+                                             style={{
+                                               fontSize: '0.62rem', fontWeight: '700', color: 'hsl(var(--primary))',
+                                               background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px'
+                                             }}
+                                           >
+                                             Set Primary
+                                           </button>
+                                         )}
+                                       </div>
+                                     </div>
+                                   ))}
+                                 </div>
+                               </div>
+                             )}
+                           </div>
                         </div>
                       </div>
 
@@ -936,6 +1268,16 @@ export default function SupplierDashboard({ currentUser }) {
                               </td>
                               <td style={{ textAlign: 'right' }}>
                                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                  <button 
+                                    onClick={() => handleOpenManageImagesModal(p)}
+                                    className="btn-secondary" 
+                                    style={{ padding: '8px 12px', fontSize: '0.78rem', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+                                    title="Manage Product Images"
+                                  >
+                                    <ImageIcon size={13} style={{ color: 'hsl(var(--primary))' }} />
+                                    Images ({p.images?.length || 0})
+                                  </button>
+                                  
                                   {p.qcStatus === 'DRAFT' || p.qcStatus === 'REJECTED' ? (
                                     <button 
                                       onClick={() => handleSubmitQC(p.productId)}
@@ -1177,6 +1519,207 @@ export default function SupplierDashboard({ currentUser }) {
                     </div>
                   )}
 
+                  {/* Manage Product Images Modal */}
+                  {editingImagesProductId && (
+                    <div style={{
+                      position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+                      background: 'rgba(4, 6, 10, 0.85)', backdropFilter: 'blur(12px)', zIndex: 999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+                      animation: 'scaleIn 0.25s ease'
+                    }}>
+                      <div className="glass-card-premium custom-scrollbar" style={{ padding: '36px', maxWidth: '640px', width: '90%', maxHeight: '90vh', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                          <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.25rem' }}>
+                            <ImageIcon style={{ color: 'hsl(var(--primary))' }} size={20} />
+                            Manage Gallery for {editingImagesProductName}
+                          </h3>
+                          <button onClick={() => setEditingImagesProductId(null)} style={{ background: 'none', border: 'none', color: 'hsl(var(--text-secondary))', cursor: 'pointer', display: 'flex' }}>
+                            <X size={20} />
+                          </button>
+                        </div>
+
+                        {/* Drag & Drop zone for existing product */}
+                        <div 
+                          onDragOver={(e) => { e.preventDefault(); setEditingDragOver(true); }}
+                          onDragLeave={() => setEditingDragOver(false)}
+                          onDrop={(e) => { e.preventDefault(); setEditingDragOver(false); const files = e.dataTransfer?.files; if (files) uploadFilesForExistingProduct(files); }}
+                          style={{
+                            border: editingDragOver ? '2px dashed hsl(var(--primary))' : '2px dashed rgba(255,255,255,0.12)',
+                            borderRadius: '16px',
+                            padding: '30px 20px',
+                            textAlign: 'center',
+                            background: editingDragOver ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0,0,0,0.18)',
+                            transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
+                            cursor: editingUploadLoading ? 'wait' : 'pointer',
+                            position: 'relative',
+                            backdropFilter: 'blur(8px)',
+                            marginBottom: '20px'
+                          }}
+                        >
+                          <input
+                            type="file"
+                            multiple
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={(e) => { if (e.target.files) uploadFilesForExistingProduct(e.target.files); e.target.value = ''; }}
+                            disabled={editingUploadLoading}
+                            style={{
+                              position: 'absolute',
+                              top: 0, left: 0, width: '100%', height: '100%',
+                              opacity: 0, cursor: 'pointer'
+                            }}
+                          />
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'hsl(var(--primary))' }}>
+                              {editingUploadLoading ? <RefreshCw className="spin-anim" size={16} /> : <Upload size={16} />}
+                            </div>
+                            <div>
+                              <h5 style={{ fontSize: '0.85rem', fontWeight: '700', marginBottom: '4px', color: '#fff' }}>
+                                {editingUploadLoading ? 'Processing files...' : 'Drag & drop more images here, or click to browse'}
+                              </h5>
+                              <p style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))' }}>
+                                Supports PNG, JPG, or WEBP (WebP auto compression & Local Storage fallback)
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Paste input for existing product */}
+                        <div style={{ marginBottom: '20px' }}>
+                          <input 
+                            type="text"
+                            placeholder="Or paste external image URL and press Enter to add..."
+                            className="styled-input"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const val = e.target.value.trim();
+                                if (val) {
+                                  setEditingImagesList(prev => [
+                                    ...prev, 
+                                    { imageUrl: val, isPrimary: prev.length === 0, altText: 'Product Image' }
+                                  ]);
+                                  e.target.value = '';
+                                  showToast('External image URL added.');
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+
+                        {/* Grid for existing product */}
+                        {editingImagesList.length === 0 ? (
+                          <div style={{ padding: '30px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', background: 'rgba(255,255,255,0.01)', color: 'hsl(var(--text-secondary))', fontStyle: 'italic', marginBottom: '24px' }}>
+                            No images in gallery yet. Drag files above to upload!
+                          </div>
+                        ) : (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                            {editingImagesList.map((img, idx) => (
+                              <div 
+                                key={idx} 
+                                style={{
+                                  position: 'relative',
+                                  borderRadius: '12px',
+                                  border: img.isPrimary ? '1px solid hsl(var(--primary))' : '1px solid rgba(255,255,255,0.06)',
+                                  overflow: 'hidden',
+                                  background: 'rgba(13, 17, 24, 0.7)',
+                                  boxShadow: img.isPrimary ? '0 4px 15px rgba(16, 185, 129, 0.15)' : '0 4px 12px rgba(0,0,0,0.2)',
+                                  transition: 'all 0.25s ease'
+                                }}
+                              >
+                                <img src={img.imageUrl.startsWith('/uploads') ? `${backendUrl}${img.imageUrl}` : img.imageUrl} alt={img.altText} style={{ width: '100%', height: '110px', objectFit: 'cover' }} />
+                                
+                                {img.isPrimary && (
+                                  <span style={{
+                                    position: 'absolute', top: '6px', left: '6px',
+                                    background: 'hsl(var(--primary))', color: 'hsl(var(--bg-dark))',
+                                    fontSize: '0.62rem', fontWeight: '900', padding: '2px 6px', borderRadius: '4px',
+                                    display: 'flex', alignItems: 'center', gap: '3px'
+                                  }}>
+                                    <Star size={8} fill="currentColor" /> Primary
+                                  </span>
+                                )}
+
+                                <div style={{ position: 'absolute', top: '6px', right: '6px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteImage(idx, editingImagesList, setEditingImagesList)}
+                                    style={{
+                                      width: '22px', height: '22px', borderRadius: '4px',
+                                      background: 'rgba(234, 67, 53, 0.85)', border: 'none', color: '#fff',
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer'
+                                    }}
+                                    title="Delete Image"
+                                  >
+                                    <Trash2 size={11} />
+                                  </button>
+                                </div>
+
+                                <div style={{
+                                  padding: '6px',
+                                  background: 'rgba(9, 13, 20, 0.9)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  borderTop: '1px solid rgba(255,255,255,0.06)'
+                                }}>
+                                  <div style={{ display: 'flex', gap: '4px' }}>
+                                    <button
+                                      type="button"
+                                      disabled={idx === 0}
+                                      onClick={() => handleMoveImage(idx, -1, editingImagesList, setEditingImagesList)}
+                                      style={{
+                                        width: '18px', height: '18px', borderRadius: '3px',
+                                        background: 'rgba(255,255,255,0.05)', border: 'none', color: '#fff',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: idx === 0 ? 'not-allowed' : 'pointer',
+                                        opacity: idx === 0 ? 0.3 : 0.8
+                                      }}
+                                    >
+                                      <ArrowLeft size={10} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={idx === editingImagesList.length - 1}
+                                      onClick={() => handleMoveImage(idx, 1, editingImagesList, setEditingImagesList)}
+                                      style={{
+                                        width: '18px', height: '18px', borderRadius: '3px',
+                                        background: 'rgba(255,255,255,0.05)', border: 'none', color: '#fff',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: idx === editingImagesList.length - 1 ? 'not-allowed' : 'pointer',
+                                        opacity: idx === editingImagesList.length - 1 ? 0.3 : 0.8
+                                      }}
+                                    >
+                                      <ArrowRight size={10} />
+                                    </button>
+                                  </div>
+
+                                  {!img.isPrimary && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetPrimary(idx, editingImagesList, setEditingImagesList)}
+                                      style={{
+                                        fontSize: '0.62rem', fontWeight: '700', color: 'hsl(var(--primary))',
+                                        background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px'
+                                      }}
+                                    >
+                                      Primary
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '20px' }}>
+                          <button type="button" onClick={() => setEditingImagesProductId(null)} className="btn-secondary" style={{ padding: '10px 20px', fontSize: '0.85rem', borderRadius: '10px', cursor: 'pointer' }}>
+                            Cancel
+                          </button>
+                          <button type="button" onClick={handleSaveProductImages} className="btn-primary" style={{ padding: '10px 20px', fontSize: '0.85rem', borderRadius: '10px', cursor: 'pointer' }}>
+                            Save Gallery Changes
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               )}
 
@@ -1299,8 +1842,155 @@ export default function SupplierDashboard({ currentUser }) {
                     </div>
                   </div>
                 </div>
-              )}
+              {/* TAB: MY COMMISSIONS */}
+              {activeTab === 'commissions' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }} className="tab-animation">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.75rem', fontWeight: '800', margin: 0, color: '#fff' }}>My Commissions & Sales Payable</h2>
+                      <p style={{ fontSize: '0.875rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>Audited payout ledger for your multi-vendor sales and platform commissions</p>
+                    </div>
+                    <button 
+                      onClick={fetchCommissionData} 
+                      className="btn-secondary" 
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px' }}
+                      disabled={commissionLoading}
+                    >
+                      <RefreshCw size={14} className={commissionLoading ? 'spin-anim' : ''} />
+                      Sync Ledger
+                    </button>
+                  </div>
 
+                  {commissionLoading && !commissionSummary ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '100px 0' }}>
+                      <RefreshCw size={36} className="spin-anim" style={{ color: 'hsl(var(--primary))' }} />
+                    </div>
+                  ) : (
+                    <>
+                      {/* STATS TILES */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+                        <div className="glass-card-premium" style={{ borderLeft: '4px solid #fff' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', letterSpacing: '0.05em' }}>MY GROSS SALES</span>
+                          <h4 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#fff', margin: '6px 0 0 0' }}>
+                            ৳{Number(commissionSummary?.totalSales || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </h4>
+                          <span style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', display: 'block', marginTop: '4px' }}>
+                            Across {commissionSummary?.totalOrders || 0} ordered items
+                          </span>
+                        </div>
+
+                        <div className="glass-card-premium" style={{ borderLeft: '4px solid #ea4335' }}>
+                          <span style={{ fontSize: '0.72rem', color: '#ea4335', fontWeight: '700', letterSpacing: '0.05em' }}>PLATFORM COMMISSION FEES</span>
+                          <h4 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#ea4335', margin: '6px 0 0 0' }}>
+                            ৳{Number(commissionSummary?.totalCommission || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </h4>
+                          <span style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', display: 'block', marginTop: '4px' }}>
+                            Waterfall fee resolved on sale
+                          </span>
+                        </div>
+
+                        <div className="glass-card-premium" style={{ borderLeft: '4px solid hsl(var(--primary))' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'hsl(var(--primary))', fontWeight: '700', letterSpacing: '0.05em' }}>PENDING PAYOUT (DUE)</span>
+                          <h4 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'hsl(var(--primary))', margin: '6px 0 0 0' }}>
+                            ৳{Number(commissionSummary?.pendingPayable || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </h4>
+                          <span style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', display: 'block', marginTop: '4px' }}>
+                            Awaiting admin manual payout
+                          </span>
+                        </div>
+
+                        <div className="glass-card-premium" style={{ borderLeft: '4px solid #3b82f6' }}>
+                          <span style={{ fontSize: '0.72rem', color: '#3b82f6', fontWeight: '700', letterSpacing: '0.05em' }}>SETTLED PAYOUTS (RECEIVED)</span>
+                          <h4 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#3b82f6', margin: '6px 0 0 0' }}>
+                            ৳{Number(commissionSummary?.paidPayable || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </h4>
+                          <span style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', display: 'block', marginTop: '4px' }}>
+                            Transferred to bank/wallet
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 3fr', gap: '24px' }}>
+                        {/* LEFT COLUMN: ACTIVE RATE WIDGET */}
+                        <div className="glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                          <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', margin: 0 }}>Waterfall Fee Status</h3>
+                          
+                          <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ fontSize: '0.8rem', color: 'hsl(var(--text-muted))', fontWeight: '700' }}>MY BASE COMMISSION RATE</div>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                              <span style={{ fontSize: '2rem', fontWeight: '900', color: 'hsl(var(--primary))' }}>
+                                {commissionCurrentRate?.rate !== undefined ? commissionCurrentRate.rate : 10.00}
+                              </span>
+                              <span style={{ fontSize: '1rem', fontWeight: '700', color: '#fff' }}>%</span>
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
+                              Source resolved via: <span style={{ fontFamily: 'monospace', fontWeight: '700', color: 'hsl(var(--primary))' }}>{commissionCurrentRate?.source || 'GLOBAL_DEFAULT'}</span>
+                            </div>
+                          </div>
+
+                          <div style={{ fontSize: '0.78rem', color: 'hsl(var(--text-muted))', lineHeight: '1.6' }}>
+                            * Commission overrides are resolved dynamically at order confirm times using the platform waterfall strategy: 
+                            <ol style={{ marginTop: '8px', paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <li>Product Override</li>
+                              <li>Supplier + Category Override</li>
+                              <li>Supplier Default Override</li>
+                              <li>Global Default Rate (10.00%)</li>
+                            </ol>
+                          </div>
+                        </div>
+
+                        {/* RIGHT COLUMN: TRANSACTIONS TABLE */}
+                        <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
+                          <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', marginBottom: '20px' }}>Recent Postings</h3>
+                          
+                          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }} className="styled-table">
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>ORDER REF</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>PRODUCT</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>GROSS SALE</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>COMMISSION RATE</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>COMMISSION DEDUCTED</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>MY PAYABLE</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>STATUS</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {commissionRecent.length === 0 ? (
+                                <tr>
+                                  <td colSpan={7} style={{ padding: '40px', textStyle: 'italic', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>No sales postings recorded yet.</td>
+                                </tr>
+                              ) : (
+                                commissionRecent.map(item => (
+                                  <tr key={item.entryId} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                    <td style={{ padding: '12px 8px', fontWeight: '700', color: '#fff' }}>{item.orderRef}</td>
+                                    <td style={{ padding: '12px 8px', fontSize: '0.85rem' }}>{item.productName}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right' }}>৳{Number(item.saleAmount).toFixed(2)}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right' }}>{item.commissionRate}%</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', color: '#ea4335' }}>৳{Number(item.commissionAmount).toFixed(2)}</td>
+                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700', color: 'hsl(var(--primary))' }}>৳{Number(item.supplierPayable).toFixed(2)}</td>
+                                    <td style={{ padding: '12px 8px' }}>
+                                      <span style={{
+                                        fontSize: '0.72rem',
+                                        padding: '3px 8px',
+                                        borderRadius: '6px',
+                                        fontWeight: '700',
+                                        background: item.status === 'PAID' ? 'rgba(16,185,129,0.1)' : item.status === 'PENDING' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                        color: item.status === 'PAID' ? '#10b981' : item.status === 'PENDING' ? '#f59e0b' : '#ef4444',
+                                        border: item.status === 'PAID' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'PENDING' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                      }}>{item.status}</span>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
