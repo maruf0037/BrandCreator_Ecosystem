@@ -4,7 +4,7 @@ import {
   ShieldAlert, BarChart3, AlertCircle, 
   DollarSign, LogOut, Package, RefreshCw, Layers, Check, X, 
   ArrowRight, UserPlus, Sliders, AlertTriangle, Play, FileText, Send,
-  MapPin, Target, Megaphone, MessageCircle
+  MapPin, Target, Megaphone, MessageCircle, Star, KeyRound
 } from 'lucide-react';
 import { api } from '../services/api';
 import { commissionApi } from '../services/commissionApi';
@@ -239,6 +239,13 @@ export default function AdminDashboard({ currentUser }) {
     commissionRate: ''
   });
   const [settingRateLoading, setSettingRateLoading] = useState(false);
+
+  // Phase 3D: Admin Override States
+  const [editingSupplier, setEditingSupplier] = useState(null);
+  const [modalTrustLevel, setModalTrustLevel] = useState('Bronze');
+  const [modalHoldDays, setModalHoldDays] = useState('');
+  const [modalReason, setModalReason] = useState('');
+  const [isUpdatingTrust, setIsUpdatingTrust] = useState(false);
 
   const [topUpForm, setTopUpForm] = useState({
     txnType: 'ADMIN_TOP_UP',
@@ -480,6 +487,34 @@ export default function AdminDashboard({ currentUser }) {
       console.error('Error fetching revenue data:', err);
     } finally {
       setRevenueLoading(false);
+    }
+  };
+
+  const handleUpdateSupplierTrust = async (e) => {
+    e.preventDefault();
+    if (!editingSupplier || !editingSupplier.supplierUserId) return;
+    setIsUpdatingTrust(true);
+    setError(null);
+
+    try {
+      await commissionApi.updateSupplierTrustAndHold(editingSupplier.supplierUserId, {
+        trustLevel: modalTrustLevel,
+        customHoldDays: modalHoldDays === '' ? null : parseInt(modalHoldDays),
+        reason: modalReason.trim() || 'Manual admin override'
+      });
+
+      setEditingSupplier(null);
+      setModalTrustLevel('Bronze');
+      setModalHoldDays('');
+      setModalReason('');
+
+      // Reload rankings data
+      fetchRevenueData();
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to update supplier trust level');
+    } finally {
+      setIsUpdatingTrust(false);
     }
   };
 
@@ -3954,24 +3989,99 @@ export default function AdminDashboard({ currentUser }) {
                               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                                 <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700' }}>SUPPLIER</th>
                                 <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>SALES</th>
-                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>COMMISSION</th>
                                 <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'right' }}>PAYABLE</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>TRUST LEVEL</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>PAYOUT HOLD</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>RETURN RATE</th>
+                                <th style={{ padding: '12px 8px', color: 'hsl(var(--text-muted))', fontSize: '0.75rem', fontWeight: '700', textAlign: 'center' }}>ACTIONS</th>
                               </tr>
                             </thead>
                             <tbody>
                               {revenueSuppliers.length === 0 ? (
                                 <tr>
-                                  <td colSpan={4} style={{ padding: '40px', textStyle: 'italic', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>No active suppliers found.</td>
+                                  <td colSpan={7} style={{ padding: '40px', textStyle: 'italic', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>No active suppliers found.</td>
                                 </tr>
                               ) : (
-                                revenueSuppliers.map(s => (
-                                  <tr key={s.supplierEmail} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                                    <td style={{ padding: '12px 8px', fontWeight: '600', color: '#fff', fontSize: '0.85rem' }}>{s.supplierEmail}</td>
-                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700' }}>৳{Number(s.totalSales).toFixed(2)}</td>
-                                    <td style={{ padding: '12px 8px', textAlign: 'right', color: '#10b981', fontWeight: '700' }}>৳{Number(s.totalCommission).toFixed(2)}</td>
-                                    <td style={{ padding: '12px 8px', textAlign: 'right', fontSize: '0.85rem' }}>৳{Number(s.totalPayable).toFixed(2)}</td>
-                                  </tr>
-                                ))
+                                revenueSuppliers.map(s => {
+                                  const resolvedHold = s.customHoldDays !== null && s.customHoldDays !== undefined
+                                    ? `${s.customHoldDays} days (Override)`
+                                    : s.trustLevel === 'Platinum' || s.trustLevel === 'Gold'
+                                    ? '3 days (Gold/Plat)'
+                                    : s.trustLevel === 'Silver'
+                                    ? '5 days (Silver)'
+                                    : '7 days (Bronze)';
+
+                                  return (
+                                    <tr key={s.supplierEmail} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                      <td style={{ padding: '12px 8px', fontWeight: '600', color: '#fff', fontSize: '0.85rem' }}>{s.supplierEmail}</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700' }}>৳{Number(s.totalSales).toFixed(2)}</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'right', fontSize: '0.85rem', color: 'hsl(var(--primary))', fontWeight: '700' }}>৳{Number(s.totalPayable).toFixed(2)}</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                                        <span style={{
+                                          fontSize: '0.7rem',
+                                          padding: '3px 8px',
+                                          borderRadius: '20px',
+                                          fontWeight: '800',
+                                          textTransform: 'uppercase',
+                                          background: s.trustLevel === 'Platinum' 
+                                            ? 'rgba(168,85,247,0.12)' 
+                                            : s.trustLevel === 'Gold'
+                                            ? 'rgba(234,179,8,0.12)'
+                                            : s.trustLevel === 'Silver'
+                                            ? 'rgba(148,163,184,0.12)'
+                                            : 'rgba(251,146,60,0.12)',
+                                          color: s.trustLevel === 'Platinum' 
+                                            ? '#c084fc' 
+                                            : s.trustLevel === 'Gold'
+                                            ? '#eab308'
+                                            : s.trustLevel === 'Silver'
+                                            ? '#94a3b8'
+                                            : '#fb923c',
+                                          border: `1px solid ${
+                                            s.trustLevel === 'Platinum' 
+                                              ? 'rgba(168,85,247,0.25)' 
+                                              : s.trustLevel === 'Gold'
+                                              ? 'rgba(234,179,8,0.25)'
+                                              : s.trustLevel === 'Silver'
+                                              ? 'rgba(148,163,184,0.25)'
+                                              : 'rgba(251,146,60,0.25)'
+                                          }`
+                                        }}>{s.trustLevel || 'Bronze'}</span>
+                                      </td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center', fontSize: '0.8rem' }}>{resolvedHold}</td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center', fontSize: '0.8rem', color: s.returnRate > 5 ? '#ea4335' : '#10b981', fontWeight: '700' }}>
+                                        {(s.returnRate || 0).toFixed(1)}%
+                                      </td>
+                                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                                        {s.supplierUserId ? (
+                                          <button 
+                                            onClick={() => {
+                                              setEditingSupplier(s);
+                                              setModalTrustLevel(s.trustLevel || 'Bronze');
+                                              setModalHoldDays(s.customHoldDays === null || s.customHoldDays === undefined ? '' : s.customHoldDays);
+                                              setModalReason('');
+                                            }}
+                                            className="btn-secondary"
+                                            style={{
+                                              padding: '4px 8px',
+                                              fontSize: '0.75rem',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '4px',
+                                              background: 'rgba(255,255,255,0.03)',
+                                              border: '1px solid rgba(255,255,255,0.08)'
+                                            }}
+                                          >
+                                            <Star size={12} fill="currentColor" style={{ color: 'hsl(var(--primary))' }} />
+                                            Manage Trust
+                                          </button>
+                                        ) : (
+                                          <span style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>Standard User</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
                               )}
                             </tbody>
                           </table>
@@ -4769,6 +4879,102 @@ export default function AdminDashboard({ currentUser }) {
 
         </main>
       </div>
+
+      {/* Phase 3D: Trust Management Modal */}
+      {editingSupplier && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.8)', backdropFilter: 'blur(10px)',
+          zIndex: 99999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
+        }}>
+          <div className="glass-card-premium" style={{
+            width: '100%', maxWidth: '480px', padding: '32px',
+            border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+            position: 'relative'
+          }}>
+            <button 
+              onClick={() => setEditingSupplier(null)} 
+              style={{ position: 'absolute', top: '20px', right: '20px', background: 'none', border: 'none', color: 'hsl(var(--text-muted))', cursor: 'pointer' }}
+            >
+              <X size={20} />
+            </button>
+
+            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#fff', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Star style={{ color: 'hsl(var(--primary))' }} size={22} fill="currentColor" />
+              Manage Supplier Trust
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: 'hsl(var(--text-muted))', marginBottom: '24px' }}>
+              Override trust status, adjust payout hold constraints, and save audit logs for <strong>{editingSupplier.supplierEmail}</strong>.
+            </p>
+
+            <form onSubmit={handleUpdateSupplierTrust} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>TRUST LEVEL TIER</label>
+                <select 
+                  value={modalTrustLevel}
+                  onChange={(e) => setModalTrustLevel(e.target.value)}
+                  className="styled-input"
+                  style={{ width: '100%', background: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}
+                >
+                  <option value="Bronze">Bronze (7-day Hold, 10% Fee)</option>
+                  <option value="Silver">Silver (5-day Hold, 8% Fee)</option>
+                  <option value="Gold">Gold (3-day Hold, 6% Fee)</option>
+                  <option value="Platinum">Platinum (3-day Hold, 5% Fee)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>CUSTOM PAYOUT HOLD (DAYS)</label>
+                <input 
+                  type="number"
+                  min="0"
+                  max="90"
+                  placeholder="e.g. 3 (leave blank for tier default)"
+                  value={modalHoldDays}
+                  onChange={(e) => setModalHoldDays(e.target.value)}
+                  className="styled-input"
+                />
+                <span style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', marginTop: '4px', display: 'block' }}>
+                  Define a manual hold period to override standard tier hold days.
+                </span>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>CHANGE REASON / AUDIT LOG</label>
+                <textarea 
+                  required
+                  placeholder="e.g. High-performance supplier manual trust upgrade"
+                  value={modalReason}
+                  onChange={(e) => setModalReason(e.target.value)}
+                  className="styled-textarea"
+                  style={{ minHeight: '80px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                <button 
+                  type="button" 
+                  onClick={() => setEditingSupplier(null)} 
+                  className="btn-secondary" 
+                  style={{ flex: 1, padding: '12px' }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn-primary" 
+                  disabled={isUpdatingTrust}
+                  style={{ flex: 1, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: '800' }}
+                >
+                  {isUpdatingTrust ? 'Saving Override...' : 'Save Override'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

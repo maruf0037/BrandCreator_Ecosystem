@@ -49,6 +49,7 @@ router.put('/admin/commission/global-default', requireAdmin, commissionControlle
 // Admin Commission Ledger
 router.get('/admin/commission/ledger', requireAdmin, commissionController.getCommissionLedger);
 router.post('/admin/commission/ledger/:entryId/mark-paid', requireAdmin, commissionController.markCommissionPaid);
+router.put('/admin/supplier/:userId/trust', requireAdmin, commissionController.updateSupplierTrustAndHold);
 
 // Supplier Commission Summary (own data)
 router.get('/supplier/commission/summary', requireSupplier, commissionController.getSupplierCommissionSummary);

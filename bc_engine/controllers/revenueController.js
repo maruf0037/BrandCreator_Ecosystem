@@ -147,9 +147,17 @@ exports.getRevenueBySupplier = async (req, res) => {
         COALESCE(SUM(cl.SupplierPayable), 0) AS totalPayable,
         COALESCE(SUM(CASE WHEN cl.Status = 'PENDING' THEN cl.SupplierPayable ELSE 0 END), 0) AS pendingPayable,
         COALESCE(SUM(CASE WHEN cl.Status = 'PAID' THEN cl.SupplierPayable ELSE 0 END), 0) AS paidPayable,
-        AVG(cl.CommissionRate) AS avgCommissionRate
+        AVG(cl.CommissionRate) AS avgCommissionRate,
+        u.Id AS supplierUserId,
+        COALESCE(u.TrustLevel, 'Bronze') AS trustLevel,
+        u.CustomHoldDays AS customHoldDays,
+        u.OnboardedAt AS onboardedAt,
+        COALESCE(u.TotalSuccessfulOrders, 0) AS totalSuccessfulOrders,
+        COALESCE(u.ReturnRate, 0.0) AS returnRate,
+        COALESCE(u.ShowTrustedBadge, 0) AS showTrustedBadge
       FROM dbo.CommissionLedger cl
-      GROUP BY cl.SupplierEmail
+      LEFT JOIN dbo.Users u ON cl.SupplierEmail = u.Email
+      GROUP BY cl.SupplierEmail, u.Id, u.TrustLevel, u.CustomHoldDays, u.OnboardedAt, u.TotalSuccessfulOrders, u.ReturnRate, u.ShowTrustedBadge
       ORDER BY SUM(cl.SaleAmount) DESC
     `);
 

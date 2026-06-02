@@ -22,6 +22,7 @@ export const commissionApi = {
     return api.get(`/api/admin/commission/ledger?${query}`);
   },
   markCommissionPaid: (entryId) => api.post(`/api/admin/commission/ledger/${entryId}/mark-paid`),
+  updateSupplierTrustAndHold: (userId, payload) => api.put(`/api/admin/supplier/${userId}/trust`, payload),
 
   // Supplier Commission Summary
   getSupplierCommissionSummary: () => api.get('/api/supplier/commission/summary'),

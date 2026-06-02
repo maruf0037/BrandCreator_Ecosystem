@@ -102,6 +102,7 @@ export default function SupplierDashboard({ currentUser }) {
       setCommissionSummary(data.summary || null);
       setCommissionRecent(data.recentEntries || []);
       setCommissionCurrentRate(data.currentRate || null);
+      setCommissionSupplier(data.supplier || null);
     } catch (err) {
       console.error('Failed to load supplier commissions:', err);
     } finally {
@@ -111,6 +112,7 @@ export default function SupplierDashboard({ currentUser }) {
 
   useEffect(() => {
     fetchSupplierData();
+    fetchCommissionData();
   }, []);
 
   useEffect(() => {
@@ -625,6 +627,53 @@ export default function SupplierDashboard({ currentUser }) {
           </button>
           
           <div style={{ height: '24px', width: '1px', background: 'rgba(255,255,255,0.1)', margin: '0 4px' }} />
+
+          {commissionSupplier && (
+            <div 
+              title={`Hold Lock: ${commissionSupplier.customHoldDays !== null ? commissionSupplier.customHoldDays + ' days (Custom Override)' : commissionSupplier.trustLevel === 'Platinum' || commissionSupplier.trustLevel === 'Gold' ? '3-day Lock' : commissionSupplier.trustLevel === 'Silver' ? '5-day Lock' : '7-day Lock'} | Return Rate: ${(commissionSupplier.returnRate || 0).toFixed(1)}%`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '20px',
+                fontSize: '0.72rem',
+                fontWeight: '800',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                background: commissionSupplier.trustLevel === 'Platinum' 
+                  ? 'rgba(168,85,247,0.12)' 
+                  : commissionSupplier.trustLevel === 'Gold'
+                  ? 'rgba(234,179,8,0.12)'
+                  : commissionSupplier.trustLevel === 'Silver'
+                  ? 'rgba(148,163,184,0.12)'
+                  : 'rgba(251,146,60,0.12)',
+                color: commissionSupplier.trustLevel === 'Platinum' 
+                  ? '#c084fc' 
+                  : commissionSupplier.trustLevel === 'Gold'
+                  ? '#eab308'
+                  : commissionSupplier.trustLevel === 'Silver'
+                  ? '#94a3b8'
+                  : '#fb923c',
+                border: `1px solid ${
+                  commissionSupplier.trustLevel === 'Platinum' 
+                    ? 'rgba(168,85,247,0.25)' 
+                    : commissionSupplier.trustLevel === 'Gold'
+                    ? 'rgba(234,179,8,0.25)'
+                    : commissionSupplier.trustLevel === 'Silver'
+                    ? 'rgba(148,163,184,0.25)'
+                    : 'rgba(251,146,60,0.25)'
+                }`,
+                boxShadow: commissionSupplier.trustLevel === 'Gold' || commissionSupplier.trustLevel === 'Platinum'
+                  ? `0 0 10px ${commissionSupplier.trustLevel === 'Gold' ? 'rgba(234,179,8,0.15)' : 'rgba(168,85,247,0.15)'}`
+                  : 'none',
+                cursor: 'help'
+              }}
+            >
+              <Star size={12} fill="currentColor" />
+              <span>{commissionSupplier.trustLevel || 'Bronze'} Supplier</span>
+            </div>
+          )}
 
           <div className="user-badge" style={{ background: 'rgba(255,255,255,0.03)', padding: '4px 12px 4px 6px', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '30px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <img src={currentUser?.avatar} alt="Avatar" className="user-avatar" style={{ border: '2px solid hsl(var(--primary))', width: '28px', height: '28px' }} />
@@ -1910,33 +1959,95 @@ export default function SupplierDashboard({ currentUser }) {
                         </div>
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 3fr', gap: '24px' }}>
-                        {/* LEFT COLUMN: ACTIVE RATE WIDGET */}
-                        <div className="glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                          <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', margin: 0 }}>Waterfall Fee Status</h3>
-                          
-                          <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            <div style={{ fontSize: '0.8rem', color: 'hsl(var(--text-muted))', fontWeight: '700' }}>MY BASE COMMISSION RATE</div>
-                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
-                              <span style={{ fontSize: '2rem', fontWeight: '900', color: 'hsl(var(--primary))' }}>
-                                {commissionCurrentRate?.rate !== undefined ? commissionCurrentRate.rate : 10.00}
-                              </span>
-                              <span style={{ fontSize: '1rem', fontWeight: '700', color: '#fff' }}>%</span>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2.8fr', gap: '24px' }}>
+                        {/* LEFT COLUMN: ACTIVE RATE WIDGET, PROGRESS, CALCULATOR */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                          <div className="glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', margin: 0 }}>Waterfall Fee Status</h3>
+                            
+                            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              <div style={{ fontSize: '0.8rem', color: 'hsl(var(--text-muted))', fontWeight: '700' }}>MY BASE COMMISSION RATE</div>
+                              <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                                <span style={{ fontSize: '2rem', fontWeight: '900', color: 'hsl(var(--primary))' }}>
+                                  {commissionCurrentRate?.rate !== undefined ? commissionCurrentRate.rate : 10.00}
+                                </span>
+                                <span style={{ fontSize: '1rem', fontWeight: '700', color: '#fff' }}>%</span>
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
+                                Source resolved via: <span style={{ fontFamily: 'monospace', fontWeight: '700', color: 'hsl(var(--primary))' }}>{commissionCurrentRate?.source || 'GLOBAL_DEFAULT'}</span>
+                              </div>
                             </div>
-                            <div style={{ fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
-                              Source resolved via: <span style={{ fontFamily: 'monospace', fontWeight: '700', color: 'hsl(var(--primary))' }}>{commissionCurrentRate?.source || 'GLOBAL_DEFAULT'}</span>
-                            </div>
+
+                            {/* Phase 3D: Volume Tier Progress Bar */}
+                            {(() => {
+                              const currentSales = Number(commissionSummary?.totalSales || 0);
+                              let currentTierName = 'Bronze';
+                              let nextTierName = 'Silver';
+                              let nextTierMin = 10000;
+                              let tierProgress = 0;
+                              let nextTierDiff = 0;
+
+                              if (currentSales >= 100000) {
+                                currentTierName = 'Platinum';
+                                nextTierName = null;
+                                tierProgress = 100;
+                              } else if (currentSales >= 50000) {
+                                currentTierName = 'Gold';
+                                nextTierName = 'Platinum';
+                                nextTierMin = 100000;
+                                tierProgress = ((currentSales - 50000) / 50000) * 100;
+                                nextTierDiff = 100000 - currentSales;
+                              } else if (currentSales >= 10000) {
+                                currentTierName = 'Silver';
+                                nextTierName = 'Gold';
+                                nextTierMin = 50000;
+                                tierProgress = ((currentSales - 10000) / 40000) * 100;
+                                nextTierDiff = 50000 - currentSales;
+                              } else {
+                                currentTierName = 'Bronze';
+                                nextTierName = 'Silver';
+                                nextTierMin = 10000;
+                                tierProgress = (currentSales / 10000) * 100;
+                                nextTierDiff = 10000 - currentSales;
+                              }
+
+                              return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '16px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', fontWeight: '700', color: 'hsl(var(--text-secondary))' }}>
+                                    <span>VOLUME TIER: {currentTierName}</span>
+                                    <span>{tierProgress.toFixed(0)}%</span>
+                                  </div>
+                                  <div style={{ height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '99px', overflow: 'hidden', position: 'relative', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, tierProgress))}%`, background: 'linear-gradient(90deg, hsl(var(--primary)), #10b981)', borderRadius: '99px', transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)' }} />
+                                  </div>
+                                  {nextTierName && (
+                                    <div style={{ fontSize: '0.68rem', color: 'hsl(var(--text-muted))', lineHeight: '1.4' }}>
+                                      Sell <strong style={{ color: 'hsl(var(--primary))' }}>৳{nextTierDiff.toLocaleString()}</strong> more to reach <strong style={{ color: '#fff' }}>{nextTierName} Tier</strong> ({nextTierName === 'Silver' ? '8%' : nextTierName === 'Gold' ? '6%' : '5%'} fee)!
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
 
-                          <div style={{ fontSize: '0.78rem', color: 'hsl(var(--text-muted))', lineHeight: '1.6' }}>
-                            * Commission overrides are resolved dynamically at order confirm times using the platform waterfall strategy: 
-                            <ol style={{ marginTop: '8px', paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              <li>Product Override</li>
-                              <li>Supplier + Category Override</li>
-                              <li>Supplier Default Override</li>
-                              <li>Global Default Rate (10.00%)</li>
-                            </ol>
-                          </div>
+                          {/* Phase 3D: Commission Savings Calculator */}
+                          {(() => {
+                            const currentSales = Number(commissionSummary?.totalSales || 0);
+                            const actualRate = commissionCurrentRate?.rate !== undefined ? commissionCurrentRate.rate : 10.00;
+                            const marketplaceRate = 15.00;
+                            const savedPercentage = Math.max(0, marketplaceRate - actualRate);
+                            const moneySaved = currentSales * (savedPercentage / 100.0);
+
+                            return (
+                              <div className="glass-card" style={{ padding: '20px', background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <div style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: '800', letterSpacing: '0.04em' }}>🔥 ECOSYSTEM SAVINGS</div>
+                                <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#10b981' }}>৳{moneySaved.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                                <div style={{ fontSize: '0.68rem', color: 'hsl(var(--text-secondary))', lineHeight: '1.4' }}>
+                                  You saved <strong style={{ color: '#10b981' }}>{savedPercentage.toFixed(0)}%</strong> in fee deductions compared to other standard 15% marketplaces!
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {/* RIGHT COLUMN: TRANSACTIONS TABLE */}
@@ -1970,15 +2081,29 @@ export default function SupplierDashboard({ currentUser }) {
                                     <td style={{ padding: '12px 8px', textAlign: 'right', color: '#ea4335' }}>৳{Number(item.commissionAmount).toFixed(2)}</td>
                                     <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: '700', color: 'hsl(var(--primary))' }}>৳{Number(item.supplierPayable).toFixed(2)}</td>
                                     <td style={{ padding: '12px 8px' }}>
-                                      <span style={{
-                                        fontSize: '0.72rem',
-                                        padding: '3px 8px',
-                                        borderRadius: '6px',
-                                        fontWeight: '700',
-                                        background: item.status === 'PAID' ? 'rgba(16,185,129,0.1)' : item.status === 'PENDING' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
-                                        color: item.status === 'PAID' ? '#10b981' : item.status === 'PENDING' ? '#f59e0b' : '#ef4444',
-                                        border: item.status === 'PAID' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'PENDING' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
-                                      }}>{item.status}</span>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{
+                                          fontSize: '0.72rem',
+                                          padding: '3px 8px',
+                                          borderRadius: '6px',
+                                          fontWeight: '700',
+                                          background: item.status === 'PAID' ? 'rgba(16,185,129,0.1)' : item.status === 'PENDING' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                                          color: item.status === 'PAID' ? '#10b981' : item.status === 'PENDING' ? '#f59e0b' : '#ef4444',
+                                          border: item.status === 'PAID' ? '1px solid rgba(16,185,129,0.2)' : item.status === 'PENDING' ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(239,68,68,0.2)'
+                                        }}>{item.status}</span>
+                                        {item.status === 'PENDING' && (
+                                          <span 
+                                            title={item.isLocked === 1 ? 'Locked: Order is currently within the return lock-out window.' : 'Released: Locked return period expired, eligible for payout!'}
+                                            style={{
+                                              display: 'inline-flex',
+                                              color: item.isLocked === 1 ? '#fbbf24' : '#10b981',
+                                              cursor: 'help'
+                                            }}
+                                          >
+                                            {item.isLocked === 1 ? <KeyRound size={12} /> : <CheckCircle size={12} />}
+                                          </span>
+                                        )}
+                                      </div>
                                     </td>
                                   </tr>
                                 ))

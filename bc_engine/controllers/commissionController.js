@@ -461,5 +461,86 @@ exports.markCommissionPaid = async (req, res) => {
   }
 };
 
+// ==========================================
+// PUT /api/admin/supplier/:userId/trust
+// ==========================================
+exports.updateSupplierTrustAndHold = async (req, res) => {
+  const { userId } = req.params;
+  const { trustLevel, customHoldDays, reason } = req.body;
+  const adminEmail = req.user?.email || req.headers['x-user-email'] || 'admin@brandcreator.xyz';
+
+  // Validate trustLevel
+  const validTiers = ['Bronze', 'Silver', 'Gold', 'Platinum'];
+  if (trustLevel && !validTiers.includes(trustLevel)) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'trustLevel must be Bronze, Silver, Gold, or Platinum' });
+  }
+
+  try {
+    const pool = await poolPromise;
+
+    // Check if supplier user exists
+    const userCheck = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query('SELECT TrustLevel, Email FROM dbo.Users WHERE Id = @userId');
+
+    const supplier = userCheck.recordset[0];
+    if (!supplier) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Supplier user not found' });
+    }
+
+    const previousTrustLevel = supplier.TrustLevel || 'Bronze';
+    const cleanHoldDays = customHoldDays !== undefined && customHoldDays !== '' && customHoldDays !== null
+      ? parseInt(customHoldDays)
+      : null;
+
+    // Run transaction update
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      // 1. Update user trust properties
+      await transaction.request()
+        .input('userId', sql.Int, userId)
+        .input('trustLevel', sql.NVarChar(50), trustLevel || previousTrustLevel)
+        .input('customHoldDays', sql.Int, cleanHoldDays)
+        .query(`
+          UPDATE dbo.Users
+          SET TrustLevel = @trustLevel,
+              CustomHoldDays = @customHoldDays,
+              ShowTrustedBadge = CASE WHEN @trustLevel IN ('Silver', 'Gold', 'Platinum') THEN 1 ELSE 0 END,
+              UpdatedAt = SYSUTCDATETIME()
+          WHERE Id = @userId
+        `);
+
+      // 2. Insert into SupplierTrustHistory
+      await transaction.request()
+        .input('userId', sql.Int, userId)
+        .input('prevTrust', sql.VarChar(20), previousTrustLevel)
+        .input('newTrust', sql.VarChar(20), trustLevel || previousTrustLevel)
+        .input('reason', sql.NVarChar(500), reason || 'Manual admin override')
+        .input('changedBy', sql.VarChar(50), adminEmail)
+        .query(`
+          INSERT INTO dbo.SupplierTrustHistory (SupplierId, PreviousTrustLevel, NewTrustLevel, Reason, ChangedBy)
+          VALUES (@userId, @prevTrust, @newTrust, @reason, @changedBy)
+        `);
+
+      await transaction.commit();
+
+      res.json({
+        success: true,
+        userId: parseInt(userId),
+        trustLevel: trustLevel || previousTrustLevel,
+        customHoldDays: cleanHoldDays,
+        showTrustedBadge: ['Silver', 'Gold', 'Platinum'].includes(trustLevel || previousTrustLevel) ? 1 : 0
+      });
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+
 // Export the helper for use in orderController
 exports.resolveCommissionRate = resolveCommissionRate;
