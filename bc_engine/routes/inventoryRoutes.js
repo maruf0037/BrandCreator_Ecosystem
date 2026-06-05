@@ -1,34 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const inventoryController = require('../controllers/inventoryController');
-
-// Custom RBAC middleware
-const checkAuth = (req, res, next) => {
-  // Developer/Test auth simulation bypass
-  if (process.env.NODE_ENV !== 'production' && req.headers['x-user-email']) {
-    req.user = {
-      email: req.headers['x-user-email'],
-      role: req.headers['x-user-role'] || 'Customer'
-    };
-  }
-
-  if (!req.user) {
-    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'You must be logged in to access this resource' });
-  }
-  next();
-};
-
-const requireRole = (allowedRoles) => {
-  return (req, res, next) => {
-    checkAuth(req, res, () => {
-      const userRole = req.user.role || 'Customer';
-      if (!allowedRoles.includes(userRole)) {
-        return res.status(403).json({ error: 'FORBIDDEN', message: 'Access denied: insufficient permissions' });
-      }
-      next();
-    });
-  };
-};
+const { requireRole, requireAdmin } = require('../src/middleware/auth');
 
 // Route definitions
 router.post('/products', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.createProduct);
@@ -37,9 +10,9 @@ router.get('/products/:productId/ledgers', requireRole(['SuperAdmin', 'Admin', '
 router.post('/inventory/transactions', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.applyTransaction);
 router.post('/inventory/transfers', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.createTransfer);
 router.get('/inventory/transfers', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.getTransfers);
-router.post('/inventory/transfers/:id/approve', requireRole(['SuperAdmin', 'Admin']), inventoryController.approveTransfer);
+router.post('/inventory/transfers/:id/approve', requireAdmin, inventoryController.approveTransfer);
 router.get('/inventory/transactions', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.getTransactions);
-router.get('/inventory/reconcile/:productId', requireRole(['SuperAdmin', 'Admin']), inventoryController.reconcileProduct);
+router.get('/inventory/reconcile/:productId', requireAdmin, inventoryController.reconcileProduct);
 router.put('/products/:productId/images', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.updateProductImages);
 router.get('/catalog/fb-feed', inventoryController.getFacebookCatalogFeed);
 

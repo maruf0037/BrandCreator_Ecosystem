@@ -24,7 +24,7 @@ exports.createProduct = async (req, res) => {
     try {
       // 1. Insert product — OWN products auto-approve and skip QC
       const isOwn = ownership === 'OWN';
-      const effectiveStatus = isOwn ? 'ACTIVE' : 'ACTIVE';
+      const effectiveStatus = isOwn ? 'ACTIVE' : 'PENDING';
       const effectiveQCStatus = isOwn ? 'APPROVED' : null;
       const effectiveReadiness = isOwn ? 'CAMPAIGN_READY' : (productReadinessStatus || 'NEEDS_REVIEW');
 
@@ -180,9 +180,9 @@ exports.getProductLedgers = async (req, res) => {
         availableQty: masterLedger.OnHandQty - masterLedger.ReservedQty
       },
       sell: {
-        onHandQty: masterLedger.OnHandQty,
-        reservedQty: masterLedger.ReservedQty,
-        availableQty: masterLedger.OnHandQty - masterLedger.ReservedQty
+        onHandQty: sellLedger.OnHandQty,
+        reservedQty: sellLedger.ReservedQty,
+        availableQty: sellLedger.OnHandQty - sellLedger.ReservedQty
       }
     });
   } catch (err) {
@@ -335,10 +335,47 @@ exports.approveTransfer = async (req, res) => {
         return res.status(400).json({ error: 'INVALID_STATUS', message: `Transfer request is already ${transfer.Status}` });
       }
 
-      // 2. (NO-OP/DEPRECATED in shared stock mode) Stock transaction is no longer needed on MASTER/SELL.
-      // Keeping the TransferRequest status update for compatibility.
+      // 2. Check MASTER ledger has sufficient available stock
+      const masterLedgerCheck = await transaction.request()
+        .input('productId', sql.Int, transfer.ProductId)
+        .query("SELECT OnHandQty, ReservedQty FROM dbo.InventoryLedgers WHERE ProductId = @productId AND LedgerType = 'MASTER'");
 
-      // 4. Update the Transfer Request status
+      const masterLedgerData = masterLedgerCheck.recordset[0];
+      const masterAvailable = masterLedgerData.OnHandQty - masterLedgerData.ReservedQty;
+
+      if (masterAvailable < transfer.Qty) {
+        return res.status(400).json({
+          error: 'INSUFFICIENT_STOCK',
+          message: 'MASTER ledger has insufficient stock for transfer',
+          details: { availableQty: masterAvailable, requestedQty: transfer.Qty }
+        });
+      }
+
+      // 3. Debit from MASTER ledger (OUT transaction)
+      await transaction.request()
+        .input('ProductId', sql.Int, transfer.ProductId)
+        .input('LedgerType', sql.NVarChar(20), 'MASTER')
+        .input('TxnType', sql.NVarChar(30), 'OUT')
+        .input('Qty', sql.Int, transfer.Qty)
+        .input('RefType', sql.NVarChar(50), 'TRANSFER')
+        .input('RefId', sql.NVarChar(100), `TRANSFER_${id}`)
+        .input('Note', sql.NVarChar(500), `Transfer to SELL (TransferId: ${id})`)
+        .input('CreatedByEmail', sql.NVarChar(255), approvedByEmail)
+        .execute('dbo.sp_InventoryApplyTransaction');
+
+      // 4. Credit to SELL ledger (IN transaction)
+      await transaction.request()
+        .input('ProductId', sql.Int, transfer.ProductId)
+        .input('LedgerType', sql.NVarChar(20), 'SELL')
+        .input('TxnType', sql.NVarChar(30), 'IN')
+        .input('Qty', sql.Int, transfer.Qty)
+        .input('RefType', sql.NVarChar(50), 'TRANSFER')
+        .input('RefId', sql.NVarChar(100), `TRANSFER_${id}`)
+        .input('Note', sql.NVarChar(500), `Transfer from MASTER (TransferId: ${id})`)
+        .input('CreatedByEmail', sql.NVarChar(255), approvedByEmail)
+        .execute('dbo.sp_InventoryApplyTransaction');
+
+      // 5. Update the Transfer Request status
       await transaction.request()
         .input('id', sql.BigInt, id)
         .input('approvedByEmail', sql.NVarChar(255), approvedByEmail)
@@ -356,6 +393,7 @@ exports.approveTransfer = async (req, res) => {
       await transaction.commit();
 
       const masterLedger = ledgersResult.recordset.find(l => l.LedgerType === 'MASTER') || { OnHandQty: 0, ReservedQty: 0 };
+      const sellLedger = ledgersResult.recordset.find(l => l.LedgerType === 'SELL') || { OnHandQty: 0, ReservedQty: 0 };
 
       res.json({
         transferId: parseInt(id),
@@ -363,7 +401,7 @@ exports.approveTransfer = async (req, res) => {
         productId: transfer.ProductId,
         movedQty: transfer.Qty,
         master: { onHandQty: masterLedger.OnHandQty, reservedQty: masterLedger.ReservedQty },
-        sell: { onHandQty: masterLedger.OnHandQty, reservedQty: masterLedger.ReservedQty } // Aliased from MASTER for compatibility
+        sell: { onHandQty: sellLedger.OnHandQty, reservedQty: sellLedger.ReservedQty }
       });
     } catch (err) {
       await transaction.rollback();
@@ -494,13 +532,13 @@ exports.getProducts = async (req, res) => {
 
     // Fetch all product images to group them by ProductId in memory
     const imagesResult = await pool.request().query("SELECT * FROM dbo.ProductImages ORDER BY IsPrimary DESC, ImageId ASC");
-    const imagesByProduct = {};
+    const imagesByProduct = new Map();
     imagesResult.recordset.forEach(img => {
       const pid = img.ProductId;
-      if (!imagesByProduct[pid]) {
-        imagesByProduct[pid] = [];
+      if (!imagesByProduct.has(pid)) {
+        imagesByProduct.set(pid, []);
       }
-      imagesByProduct[pid].push({
+      imagesByProduct.get(pid).push({
         imageId: img.ImageId,
         imageUrl: img.ImageUrl,
         isPrimary: img.IsPrimary === 1 || img.IsPrimary === true,
@@ -532,7 +570,7 @@ exports.getProducts = async (req, res) => {
                  p.OwnershipType AS ownershipType, p.CommissionRate AS commissionRate,
                  pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
-                 COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved,
+                 COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved,
                  ap.AdminSellingPrice AS adminSellingPrice,
                  ap.AdBudgetPlanned AS adBudgetPlanned,
                  ap.PlatformCommission AS platformCommission,
@@ -546,6 +584,7 @@ exports.getProducts = async (req, res) => {
           FROM dbo.Products p
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
+          LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
           LEFT JOIN dbo.AdminPricingPlans ap ON p.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
           ${adminWhereClause}
           ORDER BY p.ProductId DESC
@@ -556,7 +595,7 @@ exports.getProducts = async (req, res) => {
         if (row.enrichmentJson) {
           try { enrichment = JSON.parse(row.enrichmentJson); } catch (e) {}
         }
-        const prodImages = imagesByProduct[row.productId] || [];
+        const prodImages = imagesByProduct.get(row.productId) || [];
         const primaryImage = prodImages.find(img => img.isPrimary) || prodImages[0] || null;
 
         return {
@@ -587,11 +626,12 @@ exports.getProducts = async (req, res) => {
                  p.OwnershipType AS ownershipType,
                  pi.ImageUrl AS imageUrl,
                  COALESCE(lm.OnHandQty, 0) AS masterOnHand, COALESCE(lm.ReservedQty, 0) AS masterReserved,
-                 COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved
+                 COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved
           FROM dbo.Products p
           INNER JOIN dbo.ProductOwnership o ON p.ProductId = o.ProductId
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
           LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
+          LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
           WHERE o.SupplierEmail = @email AND o.IsActive = 1
           ORDER BY p.ProductId DESC
         `);
@@ -601,7 +641,7 @@ exports.getProducts = async (req, res) => {
         if (row.enrichmentJson) {
           try { enrichment = JSON.parse(row.enrichmentJson); } catch (e) {}
         }
-        const prodImages = imagesByProduct[row.productId] || [];
+        const prodImages = imagesByProduct.get(row.productId) || [];
         const primaryImage = prodImages.find(img => img.isPrimary) || prodImages[0] || null;
 
         return {
@@ -629,11 +669,11 @@ exports.getProducts = async (req, res) => {
                  p.VariantsJson AS variantsJson, p.SupplierLocation AS supplierLocation,
                  p.OwnershipType AS ownershipType,
                  pi.ImageUrl AS imageUrl,
-                 COALESCE(lm.OnHandQty, 0) AS sellOnHand, COALESCE(lm.ReservedQty, 0) AS sellReserved,
+                 COALESCE(ls.OnHandQty, 0) AS sellOnHand, COALESCE(ls.ReservedQty, 0) AS sellReserved,
                  ap.AdminSellingPrice AS adminSellingPrice
           FROM dbo.Products p
           LEFT JOIN dbo.ProductImages pi ON p.ProductId = pi.ProductId AND pi.IsPrimary = 1
-          LEFT JOIN dbo.InventoryLedgers lm ON p.ProductId = lm.ProductId AND lm.LedgerType = 'MASTER'
+          LEFT JOIN dbo.InventoryLedgers ls ON p.ProductId = ls.ProductId AND ls.LedgerType = 'SELL'
           LEFT JOIN dbo.AdminPricingPlans ap ON p.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
           WHERE p.Status = 'ACTIVE' AND p.QCStatus = 'APPROVED'
           ORDER BY p.ProductId DESC
@@ -644,7 +684,7 @@ exports.getProducts = async (req, res) => {
         if (row.enrichmentJson) {
           try { enrichment = JSON.parse(row.enrichmentJson); } catch (e) {}
         }
-        const prodImages = imagesByProduct[row.productId] || [];
+        const prodImages = imagesByProduct.get(row.productId) || [];
         const primaryImage = prodImages.find(img => img.isPrimary) || prodImages[0] || null;
 
         return {
@@ -805,54 +845,54 @@ exports.getFacebookCatalogFeed = async (req, res) => {
     const protocol = req.secure ? 'https' : 'http';
     const storefrontUrl = process.env.STOREFRONT_URL || 'http://localhost:8080';
 
-    let xml = `<?xml version="1.0"?>\n`;
-    xml += `<rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">\n`;
-    xml += `  <channel>\n`;
-    xml += `    <title>BrandCreator Product Catalog</title>\n`;
-    xml += `    <link>${storefrontUrl}</link>\n`;
-    xml += `    <description>Dynamic Facebook Product Feed for BrandCreator Ecosystem (Fabrics &amp; Boutique Catalog)</description>\n`;
+    // Escape XML characters
+    const escapeXml = (str) => {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    };
+
+    let xml = '<?xml version="1.0"?>\n';
+    xml += '<rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">\n';
+    xml += '  <channel>\n';
+    xml += '    <title>BrandCreator Product Catalog</title>\n';
+    xml += '    <link>' + escapeXml(storefrontUrl) + '</link>\n';
+    xml += '    <description>Dynamic Facebook Product Feed for BrandCreator Ecosystem (Fabrics &amp; Boutique Catalog)</description>\n';
 
     for (const p of result.recordset) {
       const price = p.srp ? parseFloat(p.srp) : (p.basePrice ? parseFloat(p.basePrice) * 1.15 : 1000);
-      const formattedPrice = `${price.toFixed(2)} BDT`;
+      const formattedPrice = price.toFixed(2) + ' BDT';
       const availability = p.availableQty > 0 ? 'in stock' : 'out of stock';
       
       let pImg = p.imageUrl || '';
       if (pImg && !pImg.startsWith('http') && !pImg.startsWith('https')) {
-        pImg = `${protocol}://${host}${pImg}`;
+        pImg = protocol + '://' + host + pImg;
       }
 
-      // Escape XML characters
-      const escapeXml = (str) => {
-        if (!str) return '';
-        return String(str)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&apos;');
-      };
-
-      xml += `    <item>\n`;
-      xml += `      <g:id>${p.productId}</g:id>\n`;
-      xml += `      <g:title>${escapeXml(p.productName)}</g:title>\n`;
-      xml += `      <g:description>${escapeXml(p.notes || `${p.productName} in ${p.category || 'Boutique'}`)}</g:description>\n`;
-      xml += `      <g:link>${storefrontUrl}/shop?productId=${p.productId}</g:link>\n`;
-      if (pImg) xml += `      <g:image_link>${escapeXml(pImg)}</g:image_link>\n`;
-      xml += `      <g:brand>${escapeXml(p.brand || 'BrandCreator')}</g:brand>\n`;
-      xml += `      <g:condition>new</g:condition>\n`;
-      xml += `      <g:availability>${availability}</g:availability>\n`;
-      xml += `      <g:price>${formattedPrice}</g:price>\n`;
-      if (p.category) xml += `      <g:google_product_category>${escapeXml(p.category)}</g:google_product_category>\n`;
-      xml += `      <g:custom_label_0>${p.ownershipType}</g:custom_label_0>\n`;
-      if (p.material) xml += `      <g:custom_label_1>${escapeXml(p.material)}</g:custom_label_1>\n`;
-      if (p.texture) xml += `      <g:custom_label_2>${escapeXml(p.texture)}</g:custom_label_2>\n`;
-      if (p.width) xml += `      <g:custom_label_3>${escapeXml(p.width)}</g:custom_label_3>\n`;
-      xml += `    </item>\n`;
+      xml += '    <item>\n';
+      xml += '      <g:id>' + p.productId + '</g:id>\n';
+      xml += '      <g:title>' + escapeXml(p.productName) + '</g:title>\n';
+      xml += '      <g:description>' + escapeXml(p.notes || (p.productName + ' in ' + (p.category || 'Boutique'))) + '</g:description>\n';
+      xml += '      <g:link>' + escapeXml(storefrontUrl) + '/shop?productId=' + p.productId + '</g:link>\n';
+      if (pImg) xml += '      <g:image_link>' + escapeXml(pImg) + '</g:image_link>\n';
+      xml += '      <g:brand>' + escapeXml(p.brand || 'BrandCreator') + '</g:brand>\n';
+      xml += '      <g:condition>new</g:condition>\n';
+      xml += '      <g:availability>' + availability + '</g:availability>\n';
+      xml += '      <g:price>' + escapeXml(formattedPrice) + '</g:price>\n';
+      if (p.category) xml += '      <g:google_product_category>' + escapeXml(p.category) + '</g:google_product_category>\n';
+      xml += '      <g:custom_label_0>' + escapeXml(p.ownershipType) + '</g:custom_label_0>\n';
+      if (p.material) xml += '      <g:custom_label_1>' + escapeXml(p.material) + '</g:custom_label_1>\n';
+      if (p.texture) xml += '      <g:custom_label_2>' + escapeXml(p.texture) + '</g:custom_label_2>\n';
+      if (p.width) xml += '      <g:custom_label_3>' + escapeXml(p.width) + '</g:custom_label_3>\n';
+      xml += '    </item>\n';
     }
 
-    xml += `  </channel>\n`;
-    xml += `</rss>\n`;
+    xml += '  </channel>\n';
+    xml += '</rss>\n';
 
     res.header('Content-Type', 'text/xml');
     res.send(xml);

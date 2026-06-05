@@ -35,7 +35,7 @@ Write-Host "`n[2/4] Checking IIS Routing Single Page Application Fallbacks..." -
 $routes = @("/admin", "/supplier", "/shop")
 foreach ($r in $routes) {
     try {
-        $iisRes = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8080$r" -TimeoutSec 3 -ErrorAction Stop
+        $iisRes = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8080$r" -TimeoutSec 10 -ErrorAction Stop
         if ($iisRes.StatusCode -eq 200) {
             Write-Host "      [PASS] Route http://localhost:8080${r} resolved perfectly [200 OK]" -ForegroundColor Green
         } else {
@@ -53,13 +53,23 @@ foreach ($r in $routes) {
 Write-Host "`n[3/4] Running Client production build compilation..." -ForegroundColor Yellow
 try {
     Push-Location $storefrontDir
-    $buildOutput = npm.cmd run build 2>&1
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $buildOutput = & npm.cmd run build 2>&1
+    $buildExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $oldEAP
     Pop-Location
-    Write-Host "      [PASS] Storefront React Client compiled flawlessly!" -ForegroundColor Green
+    if ($buildExitCode -eq 0) {
+        Write-Host "      [PASS] Storefront React Client compiled flawlessly!" -ForegroundColor Green
+    } else {
+        Write-Host "      [FAIL] Client build compilation failed with exit code $buildExitCode" -ForegroundColor Red
+        Write-Host "Build Output:`n$buildOutput" -ForegroundColor DarkRed
+        $allPassed = $false
+    }
 } catch {
     Pop-Location
     $errMessage = $_.Exception.Message
-    Write-Host "      [FAIL] Client build compilation failed: $errMessage" -ForegroundColor Red
+    Write-Host "      [FAIL] Client build compilation crashed: $errMessage" -ForegroundColor Red
     $allPassed = $false
 }
 
@@ -67,14 +77,18 @@ try {
 Write-Host "`n[4/4] Running backend integration and ledger reconciliation tests..." -ForegroundColor Yellow
 try {
     Push-Location $engineDir
-    $testOutput = node test_e2e_walkthrough.js 2>&1
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $testOutput = & node test_e2e_walkthrough.js 2>&1
+    $testExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $oldEAP
     Pop-Location
     
     # Check if the output contains the E2E success confirmation
-    if ($testOutput -match "ALL E2E ROLE INTEGRATION FLOWS PASSED SUCCESSFULLY") {
+    if ($testExitCode -eq 0 -and $testOutput -match "ALL E2E ROLE INTEGRATION FLOWS PASSED SUCCESSFULLY") {
         Write-Host "      [PASS] E2E ledger flow and role settlement passed successfully!" -ForegroundColor Green
     } else {
-        Write-Host "      [FAIL] E2E walkthrough failed or returned incomplete outputs." -ForegroundColor Red
+        Write-Host "      [FAIL] E2E walkthrough failed or returned incomplete outputs (Exit Code: $testExitCode)." -ForegroundColor Red
         Write-Host "Test Output:`n$testOutput" -ForegroundColor DarkRed
         $allPassed = $false
     }

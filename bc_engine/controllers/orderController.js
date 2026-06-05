@@ -172,11 +172,15 @@ exports.createOrder = async (req, res) => {
         totalAmount += item.qty * item.unitPrice;
       }
 
-      // 2. Pre-check stock levels in MASTER ledger for all products to prevent transaction aborts
+      // Resolve ledgerType based on sale channel
+      const ledgerType = (activeSaleChannel === 'PHYSICAL_SHOP') ? 'MASTER' : 'SELL';
+
+      // 2. Pre-check stock levels in MASTER/SELL ledger for all products to prevent transaction aborts
       for (const item of items) {
         const ledgerResult = await transaction.request()
           .input('productId', sql.Int, item.productId)
-          .query("SELECT OnHandQty, ReservedQty FROM dbo.InventoryLedgers WHERE ProductId = @productId AND LedgerType = 'MASTER'");
+          .input('ledgerType', sql.NVarChar(20), ledgerType)
+          .query("SELECT OnHandQty, ReservedQty FROM dbo.InventoryLedgers WHERE ProductId = @productId AND LedgerType = @ledgerType");
 
         const ledger = ledgerResult.recordset[0] || { OnHandQty: 0, ReservedQty: 0 };
         const available = ledger.OnHandQty - ledger.ReservedQty;
@@ -214,7 +218,7 @@ exports.createOrder = async (req, res) => {
 
       const orderId = orderInsertRes.recordset[0].OrderId;
 
-      // 4. Process items: insert to OrderItems and reserve/commit MASTER stock via sp_InventoryApplyTransaction
+      // 4. Process items: insert to OrderItems and reserve/commit MASTER/SELL stock via sp_InventoryApplyTransaction
       for (const item of items) {
         // A. Insert Item record
         await transaction.request()
@@ -227,10 +231,10 @@ exports.createOrder = async (req, res) => {
             VALUES (@orderId, @productId, @qty, @unitPrice)
           `);
 
-        // B. Apply MASTER RESERVE or OUT
+        // B. Apply RESERVE or OUT
         await transaction.request()
           .input('ProductId', sql.Int, item.productId)
-          .input('LedgerType', sql.NVarChar(20), 'MASTER')
+          .input('LedgerType', sql.NVarChar(20), ledgerType)
           .input('TxnType', sql.NVarChar(30), isPhysical ? 'OUT' : 'RESERVE')
           .input('Qty', sql.Int, item.qty)
           .input('RefType', sql.NVarChar(50), isPhysical ? 'ORDER_COMMIT' : 'ORDER_RESERVE')
@@ -381,7 +385,7 @@ exports.confirmOrder = async (req, res) => {
       // Get order details
       const orderRes = await transaction.request()
         .input('ref', sql.NVarChar(100), orderRef)
-        .query('SELECT OrderId, Status, PaymentStatus, TotalAmount, PaidAmount, CustomerPhone, CustomerEmail FROM dbo.Orders WHERE OrderRef = @ref');
+        .query('SELECT OrderId, Status, PaymentStatus, TotalAmount, PaidAmount, CustomerPhone, CustomerEmail, SaleChannel FROM dbo.Orders WHERE OrderRef = @ref');
 
       if (orderRes.recordset.length === 0) {
         return res.status(404).json({ error: 'NOT_FOUND', message: 'Order not found' });
@@ -443,11 +447,14 @@ exports.confirmOrder = async (req, res) => {
         .input('orderId', sql.BigInt, order.OrderId)
         .query('SELECT ProductId, Qty FROM dbo.OrderItems WHERE OrderId = @orderId');
 
+      // Resolve ledgerType dynamically
+      const ledgerType = (order.SaleChannel === 'PHYSICAL_SHOP') ? 'MASTER' : 'SELL';
+
       // 3. For each item, apply COMMIT transaction
       for (const item of itemsRes.recordset) {
         await transaction.request()
           .input('ProductId', sql.Int, item.ProductId)
-          .input('LedgerType', sql.NVarChar(20), 'MASTER')
+          .input('LedgerType', sql.NVarChar(20), ledgerType)
           .input('TxnType', sql.NVarChar(30), 'COMMIT')
           .input('Qty', sql.Int, item.Qty)
           .input('RefType', sql.NVarChar(50), 'ORDER_COMMIT')
@@ -553,7 +560,7 @@ exports.cancelOrder = async (req, res) => {
       // Get order details
       const orderRes = await transaction.request()
         .input('ref', sql.NVarChar(100), orderRef)
-        .query('SELECT OrderId, Status FROM dbo.Orders WHERE OrderRef = @ref');
+        .query('SELECT OrderId, Status, SaleChannel FROM dbo.Orders WHERE OrderRef = @ref');
 
       if (orderRes.recordset.length === 0) {
         return res.status(404).json({ error: 'NOT_FOUND', message: 'Order not found' });
@@ -579,11 +586,14 @@ exports.cancelOrder = async (req, res) => {
         .input('orderId', sql.BigInt, order.OrderId)
         .query('SELECT ProductId, Qty FROM dbo.OrderItems WHERE OrderId = @orderId');
 
+      // Resolve ledgerType dynamically
+      const ledgerType = (order.SaleChannel === 'PHYSICAL_SHOP') ? 'MASTER' : 'SELL';
+
       // For each item, apply RELEASE transaction
       for (const item of itemsRes.recordset) {
         await transaction.request()
           .input('ProductId', sql.Int, item.ProductId)
-          .input('LedgerType', sql.NVarChar(20), 'MASTER')
+          .input('LedgerType', sql.NVarChar(20), ledgerType)
           .input('TxnType', sql.NVarChar(30), 'RELEASE')
           .input('Qty', sql.Int, item.Qty)
           .input('RefType', sql.NVarChar(50), 'ORDER_RELEASE')
@@ -868,7 +878,7 @@ exports.paymentWebhook = async (req, res) => {
       try {
         const orderRes = await transaction.request()
           .input('ref', sql.NVarChar(100), orderRef)
-          .query('SELECT OrderId, Status, CustomerPhone, CustomerEmail FROM dbo.Orders WHERE OrderRef = @ref');
+          .query('SELECT OrderId, Status, CustomerPhone, CustomerEmail, SaleChannel FROM dbo.Orders WHERE OrderRef = @ref');
 
         if (orderRes.recordset.length === 0) {
           throw new Error('Order not found');
@@ -876,15 +886,17 @@ exports.paymentWebhook = async (req, res) => {
 
         const order = orderRes.recordset[0];
         if (order.Status === 'PENDING') {
-          // Fetch items and commit SELL stock
+          // Fetch items and commit SELL/MASTER stock
           const itemsRes = await transaction.request()
             .input('orderId', sql.BigInt, order.OrderId)
             .query('SELECT ProductId, Qty FROM dbo.OrderItems WHERE OrderId = @orderId');
 
+          const ledgerType = (order.SaleChannel === 'PHYSICAL_SHOP') ? 'MASTER' : 'SELL';
+
           for (const item of itemsRes.recordset) {
             await transaction.request()
               .input('ProductId', sql.Int, item.ProductId)
-              .input('LedgerType', sql.NVarChar(20), 'MASTER')
+              .input('LedgerType', sql.NVarChar(20), ledgerType)
               .input('TxnType', sql.NVarChar(30), 'COMMIT')
               .input('Qty', sql.Int, item.Qty)
               .input('RefType', sql.NVarChar(50), 'WEBHOOK_COMMIT')
@@ -953,7 +965,7 @@ exports.paymentWebhook = async (req, res) => {
       try {
         const orderRes = await transaction.request()
           .input('ref', sql.NVarChar(100), orderRef)
-          .query('SELECT OrderId, Status FROM dbo.Orders WHERE OrderRef = @ref');
+          .query('SELECT OrderId, Status, SaleChannel FROM dbo.Orders WHERE OrderRef = @ref');
 
         if (orderRes.recordset.length === 0) {
           throw new Error('Order not found');
@@ -966,10 +978,12 @@ exports.paymentWebhook = async (req, res) => {
             .input('orderId', sql.BigInt, order.OrderId)
             .query('SELECT ProductId, Qty FROM dbo.OrderItems WHERE OrderId = @orderId');
 
+          const ledgerType = (order.SaleChannel === 'PHYSICAL_SHOP') ? 'MASTER' : 'SELL';
+
           for (const item of itemsRes.recordset) {
             await transaction.request()
               .input('ProductId', sql.Int, item.ProductId)
-              .input('LedgerType', sql.NVarChar(20), 'MASTER')
+              .input('LedgerType', sql.NVarChar(20), ledgerType)
               .input('TxnType', sql.NVarChar(30), 'RELEASE')
               .input('Qty', sql.Int, item.Qty)
               .input('RefType', sql.NVarChar(50), 'WEBHOOK_RELEASE')

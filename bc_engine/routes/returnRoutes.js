@@ -1,33 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const returnController = require('../controllers/returnController');
-
-// Custom RBAC middleware (same pattern as orderRoutes.js)
-const checkAuth = (req, res, next) => {
-  if (process.env.NODE_ENV !== 'production' && req.headers['x-user-email']) {
-    req.user = {
-      email: req.headers['x-user-email'],
-      role: req.headers['x-user-role'] || 'Customer'
-    };
-  }
-
-  if (!req.user) {
-    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'You must be logged in to access this resource' });
-  }
-  next();
-};
-
-const requireRole = (allowedRoles) => {
-  return (req, res, next) => {
-    checkAuth(req, res, () => {
-      const userRole = req.user.role || 'Customer';
-      if (allowedRoles.includes(userRole)) {
-        return next();
-      }
-      return res.status(403).json({ error: 'FORBIDDEN', message: 'Access denied: insufficient permissions' });
-    });
-  };
-};
+const { requireRole, requireAdmin } = require('../src/middleware/auth');
 
 // ─── Customer-facing return endpoints ───────────────────────────────
 
@@ -40,15 +14,15 @@ router.get('/orders/:orderRef/returns', requireRole(['Customer', 'Admin', 'Super
 // ─── Admin return management endpoints ──────────────────────────────
 
 // GET /api/admin/returns — Admin lists all return requests
-router.get('/admin/returns', requireRole(['Admin', 'SuperAdmin']), returnController.getAdminReturns);
+router.get('/admin/returns', requireAdmin, returnController.getAdminReturns);
 
 // POST /api/admin/returns/:id/approve — Admin approves a return (restores stock)
-router.post('/admin/returns/:id/approve', requireRole(['Admin', 'SuperAdmin']), returnController.approveReturn);
+router.post('/admin/returns/:id/approve', requireAdmin, returnController.approveReturn);
 
 // POST /api/admin/returns/:id/reject — Admin rejects a return
-router.post('/admin/returns/:id/reject', requireRole(['Admin', 'SuperAdmin']), returnController.rejectReturn);
+router.post('/admin/returns/:id/reject', requireAdmin, returnController.rejectReturn);
 
 // POST /api/admin/returns/:id/refund — Admin processes the final refund
-router.post('/admin/returns/:id/refund', requireRole(['Admin', 'SuperAdmin']), returnController.processRefund);
+router.post('/admin/returns/:id/refund', requireAdmin, returnController.processRefund);
 
 module.exports = router;

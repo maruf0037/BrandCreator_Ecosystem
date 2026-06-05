@@ -1,38 +1,14 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const locationAdsController = require('../controllers/locationAdsController');
+const { requireAdmin } = require('../src/middleware/auth');
 
-router.use((req, _res, next) => {
-  if (process.env.NODE_ENV !== 'production' && req.headers['x-user-email']) {
-    req.user = {
-      email: req.headers['x-user-email'],
-      role: req.headers['x-user-role'] || 'Customer'
-    };
-  }
-
-  if (!req.user) {
-    req.user = { email: 'admin@test.com', role: 'Admin' };
-  }
-
-  next();
-});
-
-const requireRole = (allowedRoles) => {
-  return (req, res, next) => {
-    const userRole = req.user.role || 'Customer';
-    if (!allowedRoles.includes(userRole)) {
-      return res.status(403).json({ error: 'FORBIDDEN', message: 'Insufficient role permissions' });
-    }
-    next();
-  };
-};
-
-router.post('/admin/location-ads/analyze', requireRole(['SuperAdmin', 'Admin']), locationAdsController.analyzeLocationAds);
-router.post('/admin/location-ads/sync', requireRole(['SuperAdmin', 'Admin']), (req, res, next) => {
+router.post('/admin/location-ads/analyze', requireAdmin, locationAdsController.analyzeLocationAds);
+router.post('/admin/location-ads/sync', requireAdmin, (req, res, next) => {
   req.body.testedLocation = req.body.testedLocation || req.body.locationName;
   return locationAdsController.analyzeLocationAds(req, res, next);
 });
-router.get('/admin/location-ads/products/:productId/suggestions', requireRole(['SuperAdmin', 'Admin']), locationAdsController.getProductSuggestions);
-router.get('/admin/location-ads/profiles', requireRole(['SuperAdmin', 'Admin']), locationAdsController.getLocationProfiles);
+router.get('/admin/location-ads/products/:productId/suggestions', requireAdmin, locationAdsController.getProductSuggestions);
+router.get('/admin/location-ads/profiles', requireAdmin, locationAdsController.getLocationProfiles);
 
 module.exports = router;
