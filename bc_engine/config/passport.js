@@ -23,7 +23,7 @@ passport.use(new GoogleStrategy({
       .query('SELECT TOP 1 * FROM Users WHERE Email = @email');
     let user = result.recordset[0];
 
-    const requestedRole = req.session && req.session.oauthRole;
+    const requestedRole = (req.query && req.query.state) || (req.session && req.session.oauthRole);
 
     if (!user) {
       const defaultRole = email === SUPER_ADMIN_EMAIL ? 'SuperAdmin' : (requestedRole || 'Customer');

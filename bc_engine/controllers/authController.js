@@ -12,7 +12,7 @@ exports.googleCallback = (req, res) => {
     role = "SuperAdmin";
   }
   
-  const requestedRole = req.session && req.session.oauthRole;
+  const requestedRole = (req.query && req.query.state) || (req.session && req.session.oauthRole);
   if (req.session) {
     delete req.session.oauthRole;
   }

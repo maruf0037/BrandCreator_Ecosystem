@@ -10,20 +10,23 @@ const router = express.Router();
 router.get(
   '/google',
   (req, res, next) => {
+    const role = req.query.role || 'Customer';
     if (req.query.role) {
       req.session.oauthRole = req.query.role;
     }
-    next();
-  },
-  passport.authenticate('google', {
-    scope: ['profile', 'email']
-  })
+    passport.authenticate('google', {
+      scope: ['profile', 'email'],
+      state: role
+    })(req, res, next);
+  }
 );
 
 // Google OAuth callback route
 router.get(
   '/google/callback',
-  passport.authenticate('google', { failureRedirect: '/login' }),
+  (req, res, next) => {
+    passport.authenticate('google', { failureRedirect: '/login' })(req, res, next);
+  },
   authController.googleCallback
 );
 
