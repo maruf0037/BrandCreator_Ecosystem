@@ -27,7 +27,7 @@ const { metricsHandler } = require("./src/metrics");
 const logger = require("./src/logger");
 
 const { startEnrichmentRetryWorker } = require('./controllers/qcEnrichmentController');
-const { poolPromise } = require('./config/db');
+const { poolPromise, dbDisabled } = require('./config/db');
 
 const app = express();
 const allowedOrigins = [
@@ -41,6 +41,7 @@ const allowedOrigins = [
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (origin.endsWith('.app.github.dev')) return callback(null, true); // allow app.github.dev origins
     return callback(new Error(`CORS origin blocked: ${origin}`));
   },
   credentials: true
@@ -71,6 +72,10 @@ app.use(passport.session());
 
 // Health endpoint checks SQL connectivity
 app.get('/health', async (_req, res) => {
+  if (dbDisabled) {
+    return res.status(503).json({ status: 'degraded', db: 'disabled', error: 'SQL Server not configured' });
+  }
+
   try {
     const pool = await poolPromise;
     await pool.request().query('SELECT 1 AS ok');
@@ -127,9 +132,14 @@ app.use((err, req, res, _next) => {
 
 const port = process.env.PORT || 5000;
 app.listen(port, async () => {
+  if (dbDisabled) {
+    console.warn('bc_engine is running in degraded mode: SQL Server is not configured. Some endpoints may be unavailable.');
+    console.log(`bc_engine running on port ${port}`);
+    return;
+  }
+
   try {
     const pool = await poolPromise; // ensure DB connection on start
-    console.log('SQL Server Connected Successfully');
     console.log(`bc_engine running on port ${port}`);
 
     // Pre-warm active webhook key versions setup for backward testing stability
