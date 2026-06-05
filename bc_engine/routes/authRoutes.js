@@ -14,9 +14,16 @@ router.get(
     if (req.query.role) {
       req.session.oauthRole = req.query.role;
     }
+    
+    // Resolve callback URL dynamically based on current host header (localhost, tailscale, etc.)
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const callbackURL = `${protocol}://${host}/auth/google/callback`;
+
     passport.authenticate('google', {
       scope: ['profile', 'email'],
-      state: role
+      state: role,
+      callbackURL
     })(req, res, next);
   }
 );
@@ -25,7 +32,14 @@ router.get(
 router.get(
   '/google/callback',
   (req, res, next) => {
-    passport.authenticate('google', { failureRedirect: '/login' })(req, res, next);
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const callbackURL = `${protocol}://${host}/auth/google/callback`;
+
+    passport.authenticate('google', { 
+      failureRedirect: '/login',
+      callbackURL
+    })(req, res, next);
   },
   authController.googleCallback
 );
