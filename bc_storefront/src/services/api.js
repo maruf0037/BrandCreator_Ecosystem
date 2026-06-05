@@ -1,10 +1,16 @@
 // src/services/api.js
 
-const DEFAULT_BACKEND_URL = 'http://100.110.252.19:5000';
-const VITE_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+export function getBackendUrl() {
+  const envUrl = import.meta.env.VITE_BACKEND_URL;
+  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    return envUrl.replace(/\/$/, '');
+  }
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+  const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+  return `${protocol}//${hostname}:5000`;
+}
 
-// Resolve clean base URL without trailing slash
-export const BASE_URL = (VITE_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/, '');
+export const BASE_URL = getBackendUrl();
 
 /**
  * Custom fetch wrapper that ensures credentials (cookies) are included

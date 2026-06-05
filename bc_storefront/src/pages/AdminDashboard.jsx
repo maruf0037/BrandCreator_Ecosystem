@@ -4,9 +4,10 @@ import {
   ShieldAlert, BarChart3, AlertCircle, 
   DollarSign, LogOut, Package, RefreshCw, Layers, Check, X, 
   ArrowRight, UserPlus, Sliders, AlertTriangle, Play, FileText, Send,
-  MapPin, Target, Megaphone, MessageCircle, Star, KeyRound
+  MapPin, Target, Megaphone, MessageCircle, Star, KeyRound, Barcode,
+  Tag, Percent, ToggleLeft, ToggleRight, PlusCircle, Calendar, Hash, Wallet
 } from 'lucide-react';
-import { api } from '../services/api';
+import { api, getBackendUrl } from '../services/api';
 import { commissionApi } from '../services/commissionApi';
 
 const adminDashboardStyles = `
@@ -30,6 +31,22 @@ const adminDashboardStyles = `
   
   .tab-animation {
     animation: fadeInUp 0.4s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+  }
+  
+  .revenue-grid {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) !important;
+    gap: 24px !important;
+  }
+  .commissions-grid {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) !important;
+    gap: 24px !important;
+  }
+  @media (max-width: 1200px) {
+    .revenue-grid, .commissions-grid {
+      grid-template-columns: 1fr !important;
+    }
   }
   
   .glass-card-premium {
@@ -187,7 +204,7 @@ const adminDashboardStyles = `
 `;
 
 export default function AdminDashboard({ currentUser }) {
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+  const backendUrl = getBackendUrl();
 
   // State Management
   const [activeTab, setActiveTab] = useState('overview');
@@ -207,6 +224,16 @@ export default function AdminDashboard({ currentUser }) {
   const [walletAuditReport, setWalletAuditReport] = useState(null);
   const [walletHistory, setWalletHistory] = useState([]);
   
+  // Marketing Wallet payment confirmation state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
+  const [paymentLoading, setPaymentLoading] = useState(false);
+
+  // AI dynamic pricing pick states
+  const [aiPicks, setAiPicks] = useState([]);
+  const [aiPicksLoading, setAiPicksLoading] = useState(false);
+
   // Onboarding state variables
   const [onboardings, setOnboardings] = useState([]);
   const [onboardingsLoading, setOnboardingsLoading] = useState(false);
@@ -274,6 +301,37 @@ export default function AdminDashboard({ currentUser }) {
   const [renewLicenseId, setRenewLicenseId] = useState(null);
   const [renewDays, setRenewDays] = useState(30);
 
+  // Advanced POS Modules States
+  // 1. Inbound Logistics (GRN) States
+  const [grns, setGrns] = useState([]);
+  const [grnsLoading, setGrnsLoading] = useState(false);
+  const [showCreateGrnModal, setShowCreateGrnModal] = useState(false);
+  const [showQcGrnModal, setShowQcGrnModal] = useState(false);
+  const [selectedGrnForQc, setSelectedGrnForQc] = useState(null);
+  const [newGrnForm, setNewGrnForm] = useState({ supplierEmail: '', invoiceNumber: '', notes: '', items: [] });
+  const [qcFormItems, setQcFormItems] = useState([]);
+
+  // 2. Returns and Reverse Logistics States
+  const [returnRequests, setReturnRequests] = useState([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+  const [selectedOrderForDetails, setSelectedOrderForDetails] = useState(null);
+  const [orderDetailsLoading, setOrderDetailsLoading] = useState(false);
+  const [showCreateReturnModal, setShowCreateReturnModal] = useState(false);
+  const [newReturnForm, setNewReturnForm] = useState({ items: [], reason: '', refundMethod: 'CASH', cancellationType: 'PARTIAL_RETURN' });
+  const [selectedReturnForReject, setSelectedReturnForReject] = useState(null);
+  const [rejectReturnReason, setRejectReturnReason] = useState('');
+  const [showRejectReturnModal, setShowRejectReturnModal] = useState(false);
+
+  // 3. Promotions & Campaign Manager States
+  const [promotions, setPromotions] = useState([]);
+  const [promotionsLoading, setPromotionsLoading] = useState(false);
+  const [showCreatePromoModal, setShowCreatePromoModal] = useState(false);
+  const [promoForm, setPromoForm] = useState({
+    promoCode: '', promoName: '', promoType: 'PERCENTAGE',
+    discountValue: '', minOrderAmount: '', minOrderQty: '1',
+    startDate: '', endDate: '', maxUsageLimit: '', productIds: []
+  });
+  const [promoTogglingId, setPromoTogglingId] = useState(null);
 
   // Forms / Modals state
   const [assigningProductId, setAssigningProductId] = useState(null);
@@ -402,6 +460,237 @@ export default function AdminDashboard({ currentUser }) {
       setError(err.message || 'Error occurred while dispatching manual template');
     } finally {
       setWhatsappLoading(false);
+    }
+  };
+
+  const fetchGrns = async () => {
+    setGrnsLoading(true);
+    setError(null);
+    try {
+      const res = await api.get('/api/admin/grn');
+      if (res.success) {
+        setGrns(res.items || []);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to fetch Goods Received Notes.');
+    } finally {
+      setGrnsLoading(false);
+    }
+  };
+
+  const fetchReturnRequests = async () => {
+    setReturnsLoading(true);
+    setError(null);
+    try {
+      const res = await api.get('/api/admin/returns');
+      if (res.success) {
+        setReturnRequests(res.items || []);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to fetch Return Requests.');
+    } finally {
+      setReturnsLoading(false);
+    }
+  };
+
+  const fetchPromotions = async () => {
+    setPromotionsLoading(true);
+    setError(null);
+    try {
+      const res = await api.get('/api/admin/promotions');
+      if (res.success) {
+        setPromotions(res.items || []);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to fetch promotions.');
+    } finally {
+      setPromotionsLoading(false);
+    }
+  };
+
+  const handleCreatePromotion = async (e) => {
+    e.preventDefault();
+    if (!promoForm.promoCode || !promoForm.promoName || !promoForm.discountValue || !promoForm.startDate || !promoForm.endDate) {
+      setError('Please fill in all required promotion fields.');
+      return;
+    }
+    try {
+      setError(null);
+      const payload = {
+        ...promoForm,
+        discountValue: parseFloat(promoForm.discountValue),
+        minOrderAmount: parseFloat(promoForm.minOrderAmount || 0),
+        minOrderQty: parseInt(promoForm.minOrderQty || 1),
+        maxUsageLimit: promoForm.maxUsageLimit ? parseInt(promoForm.maxUsageLimit) : null,
+      };
+      const res = await api.post('/api/admin/promotions', payload);
+      if (res.success) {
+        showToast(`Promotion "${res.promoCode}" created successfully!`);
+        setShowCreatePromoModal(false);
+        setPromoForm({ promoCode: '', promoName: '', promoType: 'PERCENTAGE', discountValue: '', minOrderAmount: '', minOrderQty: '1', startDate: '', endDate: '', maxUsageLimit: '', productIds: [] });
+        fetchPromotions();
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to create promotion.');
+    }
+  };
+
+  const handleTogglePromoStatus = async (promoId) => {
+    setPromoTogglingId(promoId);
+    try {
+      const res = await api.put(`/api/admin/promotions/${promoId}/toggle`);
+      if (res.success) {
+        showToast(`Promotion ${res.isActive ? 'activated' : 'deactivated'} successfully.`);
+        setPromotions(prev => prev.map(p =>
+          p.promoId === promoId ? { ...p, isActive: res.isActive } : p
+        ));
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to toggle promotion status.');
+    } finally {
+      setPromoTogglingId(null);
+    }
+  };
+
+  const viewOrderDetails = async (orderRef) => {
+    setOrderDetailsLoading(true);
+    setError(null);
+    try {
+      const res = await api.get(`/api/orders/${orderRef}`);
+      setSelectedOrderForDetails(res);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to fetch order details.');
+    } finally {
+      setOrderDetailsLoading(false);
+    }
+  };
+
+  const handleCreateGrn = async (e) => {
+    e.preventDefault();
+    if (!newGrnForm.supplierEmail || newGrnForm.items.length === 0) {
+      setError('Supplier email and at least one item are required.');
+      return;
+    }
+    try {
+      setError(null);
+      const res = await api.post('/api/admin/grn', newGrnForm);
+      if (res.success) {
+        showToast('Goods Received Note initialized successfully.');
+        setShowCreateGrnModal(false);
+        setNewGrnForm({ supplierEmail: '', invoiceNumber: '', notes: '', items: [] });
+        fetchGrns();
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to create Goods Received Note.');
+    }
+  };
+
+  const handleSubmitGrnQc = async (e) => {
+    e.preventDefault();
+    try {
+      setError(null);
+      const payload = {
+        items: qcFormItems.map(item => ({
+          grnItemId: item.grnItemId,
+          qtyAccepted: Number(item.qtyAccepted),
+          qtyRejected: Number(item.qtyRejected),
+          qcStatus: item.qcStatus,
+          qcNotes: item.qcNotes
+        }))
+      };
+      const res = await api.post(`/api/admin/grn/${selectedGrnForQc.grnId}/qc`, payload);
+      if (res.success) {
+        showToast(`QC completed. GRN Status: ${res.status}`);
+        setShowQcGrnModal(false);
+        setSelectedGrnForQc(null);
+        fetchGrns();
+        fetchAllData();
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to submit GRN QC.');
+    }
+  };
+
+  const handleCreateReturnRequest = async (e) => {
+    e.preventDefault();
+    const activeItems = newReturnForm.items.filter(i => i.selected);
+    if (activeItems.length === 0) {
+      setError('At least one item is required for return.');
+      return;
+    }
+    try {
+      setError(null);
+      const payload = {
+        items: activeItems.map(item => ({
+          productId: Number(item.productId),
+          qty: Number(item.qty)
+        })),
+        reason: newReturnForm.reason,
+        refundMethod: newReturnForm.refundMethod,
+        cancellationType: newReturnForm.cancellationType
+      };
+      const res = await api.post(`/api/orders/${selectedOrderForDetails.orderRef}/return`, payload);
+      if (res.success) {
+        showToast('Return request submitted successfully.');
+        setShowCreateReturnModal(false);
+        setNewReturnForm({ items: [], reason: '', refundMethod: 'CASH', cancellationType: 'PARTIAL_RETURN' });
+        viewOrderDetails(selectedOrderForDetails.orderRef);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to submit return request.');
+    }
+  };
+
+  const handleApproveReturn = async (returnRequestId, ledgerTarget) => {
+    try {
+      setError(null);
+      const res = await api.post(`/api/admin/returns/${returnRequestId}/approve`, { targetLedger: ledgerTarget });
+      if (res.success) {
+        showToast('Return request approved. Stock restored.');
+        fetchReturnRequests();
+        fetchAllData();
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to approve return request.');
+    }
+  };
+
+  const handleRejectReturn = async (e) => {
+    e.preventDefault();
+    if (!rejectReturnReason.trim()) {
+      setError('Rejection reason is required.');
+      return;
+    }
+    try {
+      setError(null);
+      const res = await api.post(`/api/admin/returns/${selectedReturnForReject.returnRequestId}/reject`, { rejectReason: rejectReturnReason });
+      if (res.success) {
+        showToast('Return request rejected.');
+        setShowRejectReturnModal(false);
+        setSelectedReturnForReject(null);
+        setRejectReturnReason('');
+        fetchReturnRequests();
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to reject return request.');
+    }
+  };
+
+  const handleProcessRefund = async (returnRequestId) => {
+    try {
+      setError(null);
+      const res = await api.post(`/api/admin/returns/${returnRequestId}/refund`);
+      if (res.success) {
+        showToast('Refund processed successfully.');
+        fetchReturnRequests();
+        fetchAllData();
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to process refund.');
     }
   };
 
@@ -548,6 +837,12 @@ export default function AdminDashboard({ currentUser }) {
   }, []);
 
   useEffect(() => {
+    if (currentUser?.role === 'Supplier' && activeTab === 'overview') {
+      setActiveTab('locationAds');
+    }
+  }, [currentUser, activeTab]);
+
+  useEffect(() => {
     if (activeTab === 'revenue') {
       fetchRevenueData();
     } else if (activeTab === 'commissions') {
@@ -556,6 +851,14 @@ export default function AdminDashboard({ currentUser }) {
       fetchLicenses();
     } else if (activeTab === 'onboardings') {
       fetchOnboardings();
+    } else if (activeTab === 'grn') {
+      fetchGrns();
+    } else if (activeTab === 'returns') {
+      fetchReturnRequests();
+    } else if (activeTab === 'promotions') {
+      fetchPromotions();
+    } else if (activeTab === 'aiPricing') {
+      fetchAiPicks();
     }
   }, [activeTab, revenueFilter, commissionFilters]);
 
@@ -807,7 +1110,10 @@ export default function AdminDashboard({ currentUser }) {
     }
 
     try {
-      const data = await api.get(`/api/admin/location-ads/products/${productId}/suggestions`);
+      const endpoint = currentUser?.role === 'Supplier'
+        ? `/api/marketing-budget/suggestions?productId=${productId}`
+        : `/api/admin/location-ads/products/${productId}/suggestions`;
+      const data = await api.get(endpoint);
       setLocationAdsHistory(data.items || []);
     } catch (err) {
       setLocationAdsHistory([]);
@@ -817,6 +1123,76 @@ export default function AdminDashboard({ currentUser }) {
       }));
     }
   };
+
+  const fetchWalletData = async () => {
+    try {
+      const [walletData, walletAuditData, walletHistoryData] = await Promise.all([
+        api.get('/api/admin/wallet/summary').catch(() => null),
+        api.get('/api/admin/wallet/audit-report').catch(() => null),
+        api.get('/api/admin/wallet/history').catch(() => ({ items: [] }))
+      ]);
+      setWalletSummary(walletData || null);
+      setWalletAuditReport(walletAuditData || null);
+      setWalletHistory(walletHistoryData?.items || []);
+    } catch (err) {
+      console.warn('Failed to load wallet data:', err);
+    }
+  };
+
+  const handleConfirmBudgetPayment = async (e) => {
+    e.preventDefault();
+    if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
+      alert('Please enter a valid amount.');
+      return;
+    }
+    try {
+      setPaymentLoading(true);
+      const res = await api.post('/api/marketing-budget/payment-confirm', {
+        amount: parseFloat(paymentAmount),
+        notes: paymentNotes,
+        txnType: currentUser?.role === 'Supplier' ? 'SUPPLIER_CAMPAIGN_DEPOSIT' : 'ADMIN_TOP_UP'
+      });
+      showToast('Marketing budget payment confirmed and credited successfully!');
+      setShowPaymentModal(false);
+      fetchWalletData();
+    } catch (err) {
+      alert(err.message || 'Failed to confirm budget payment.');
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  const fetchAiPicks = async () => {
+    try {
+      setAiPicksLoading(true);
+      const data = await api.get('/api/admin/ai-picks');
+      setAiPicks(data.items || []);
+    } catch (err) {
+      showToast(err.message || 'Failed to fetch AI Daily Picks');
+    } finally {
+      setAiPicksLoading(false);
+    }
+  };
+
+  const handleApproveAiPrice = async (productId, approvedPrice) => {
+    try {
+      await api.post('/api/admin/ai-picks/approve', { productId, approvedPrice });
+      showToast('AI Dynamic Price approved successfully!');
+      fetchAiPicks();
+      fetchAllData();
+    } catch (err) {
+      showToast(err.message || 'Failed to approve AI Price');
+    }
+  };
+
+  useEffect(() => {
+    const activeSuggestion = locationAdsResult || locationAdsHistory[0] || null;
+    if (activeSuggestion) {
+      const budget = activeSuggestion.budgetSuggestion?.suggestedTotalBudgetMin || 1000;
+      setPaymentAmount(budget);
+      setPaymentNotes(`Payment confirmation for product ${activeSuggestion.productName || activeSuggestion.sku} in ${activeSuggestion.testedLocation}`);
+    }
+  }, [locationAdsResult, locationAdsHistory, showPaymentModal]);
 
   const handleAnalyzeLocationAds = async (e) => {
     e.preventDefault();
@@ -1102,157 +1478,247 @@ export default function AdminDashboard({ currentUser }) {
       <div className="dashboard-container">
         <aside className="sidebar" style={{ background: 'rgba(13, 17, 24, 0.45)', borderRight: '1px solid rgba(255,255,255,0.04)' }}>
           <ul className="sidebar-menu">
-            <li>
-              <button 
-                onClick={() => setActiveTab('overview')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'overview' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <BarChart3 size={18} />
-                Overview
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('products')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'products' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <Package size={18} />
-                Double Ledgers
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('qc')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'qc' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <AlertCircle size={18} />
-                QC Queue ({qcQueue.length})
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('transfers')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'transfers' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease', display: 'none' }}
-              >
-                <Layers size={18} />
-                Transfers ({transfers.filter(t => t.status === 'PENDING').length})
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('outbox')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'outbox' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <Send size={18} />
-                Outbox / DLQ
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('ledgers')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'ledgers' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <FileText size={18} />
-                Inventory Ledgers
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('locationAds')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'locationAds' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <MapPin size={18} />
-                Location Ads
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('orders')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'orders' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <DollarSign size={18} />
-                Orders ({orders.length})
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('revenue')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'revenue' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <BarChart3 size={18} style={{ color: '#ec4899' }} />
-                Revenue Dashboard
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('commissions')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'commissions' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <DollarSign size={18} style={{ color: '#10b981' }} />
-                Commission Ledger
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('alerts')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'alerts' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <AlertTriangle size={18} />
-                Low Stock Alerts ({lowStockAlerts.length})
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('ads')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'ads' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <BarChart3 size={18} />
-                Ads Command
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => { setActiveTab('whatsapp'); fetchWhatsAppData(); }} 
-                className={`sidebar-link w-full text-left ${activeTab === 'whatsapp' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <MessageCircle size={18} />
-                WhatsApp CRM
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('licenses')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'licenses' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <KeyRound size={18} />
-                Supplier Licenses
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setActiveTab('onboardings')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'onboardings' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <UserPlus size={18} />
-                Pending Onboardings
-              </button>
-            </li>
+            {currentUser?.role === 'Supplier' ? (
+              <>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('locationAds')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'locationAds' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <MapPin size={18} />
+                    Location Ads Suggestions
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => { setActiveTab('grn'); fetchGrns(); }} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'grn' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <Layers size={18} />
+                    Inbound Cargo (GRN)
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => { setActiveTab('returns'); fetchReturnRequests(); }} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'returns' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <RefreshCw size={18} />
+                    Returns & Refunds
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => window.open('/pos', '_blank')} 
+                    className="sidebar-link w-full text-left"
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease', color: 'hsl(var(--primary))' }}
+                  >
+                    <Barcode size={18} />
+                    POS Cashier Terminal ↗
+                  </button>
+                </li>
+              </>
+            ) : (
+              <>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('overview')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'overview' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <BarChart3 size={18} />
+                    Overview
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => { setActiveTab('aiPricing'); fetchAiPicks(); }} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'aiPricing' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <Sliders size={18} style={{ color: 'hsl(var(--primary))' }} />
+                    AI Pricing Queue
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('products')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'products' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <Package size={18} />
+                    Double Ledgers
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('qc')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'qc' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <AlertCircle size={18} />
+                    QC Queue ({qcQueue.length})
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('transfers')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'transfers' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease', display: 'none' }}
+                  >
+                    <Layers size={18} />
+                    Transfers ({transfers.filter(t => t.status === 'PENDING').length})
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('outbox')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'outbox' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <Send size={18} />
+                    Outbox / DLQ
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('ledgers')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'ledgers' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <FileText size={18} />
+                    Inventory Ledgers
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('locationAds')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'locationAds' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <MapPin size={18} />
+                    Location Ads
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('orders')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'orders' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <DollarSign size={18} />
+                    Orders ({orders.length})
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('revenue')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'revenue' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <BarChart3 size={18} style={{ color: '#ec4899' }} />
+                    Revenue Dashboard
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('commissions')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'commissions' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <DollarSign size={18} style={{ color: '#10b981' }} />
+                    Commission Ledger
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('alerts')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'alerts' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <AlertTriangle size={18} />
+                    Low Stock Alerts ({lowStockAlerts.length})
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('ads')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'ads' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <BarChart3 size={18} />
+                    Ads Command
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => { setActiveTab('whatsapp'); fetchWhatsAppData(); }} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'whatsapp' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <MessageCircle size={18} />
+                    WhatsApp CRM
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('licenses')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'licenses' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <KeyRound size={18} />
+                    Supplier Licenses
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => setActiveTab('onboardings')} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'onboardings' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <UserPlus size={18} />
+                    Pending Onboardings
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => { setActiveTab('promotions'); fetchPromotions(); }} 
+                    className={`sidebar-link w-full text-left ${activeTab === 'promotions' ? 'active' : ''}`}
+                    style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                  >
+                    <Tag size={18} />
+                    Promotions & Campaigns
+                  </button>
+                </li>
+              </>
+            )}
           </ul>
+
+          {/* Marketing Wallet Sidebar Widget */}
+          <div style={{ padding: '16px 20px', margin: '20px 0', background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01))', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.06)', backdropFilter: 'blur(10px)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+              <Wallet size={16} style={{ color: 'hsl(var(--primary))' }} />
+              <span style={{ fontSize: '0.72rem', color: 'hsl(var(--text-muted))', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '850' }}>Marketing Wallet</span>
+            </div>
+            <div style={{ fontSize: '1.25rem', fontWeight: '950', color: '#fff', marginBottom: '4px' }}>
+              BDT {Number(walletSummary?.adsSpendAvailable || 0).toFixed(2)}
+            </div>
+            <div style={{ fontSize: '0.68rem', color: 'hsl(var(--text-muted))' }}>
+              Spendable Ads Balance
+            </div>
+            {currentUser?.role === 'Supplier' && (
+              <button
+                onClick={() => setShowPaymentModal(true)}
+                className="btn-primary"
+                style={{ width: '100%', marginTop: '12px', padding: '6px 12px', fontSize: '0.78rem', justifyContent: 'center', height: 'auto', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#10b981' }}
+              >
+                + Add Funds
+              </button>
+            )}
+          </div>
 
           <div className="glass-card" style={{ padding: '20px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.04)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <span style={{ fontSize: '0.72rem', color: 'hsl(var(--text-muted))', display: 'block', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
@@ -3358,106 +3824,181 @@ export default function AdminDashboard({ currentUser }) {
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 0.9fr) minmax(360px, 1.1fr)', gap: '24px', alignItems: 'start' }}>
-                    <form onSubmit={handleAnalyzeLocationAds} className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{
-                          width: '46px', height: '46px', borderRadius: '14px', background: 'rgba(59, 130, 246, 0.12)',
-                          border: '1px solid rgba(59, 130, 246, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          color: '#3b82f6'
-                        }}>
-                          <Target size={22} />
-                        </div>
-                        <div>
-                          <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Run Location Test</h3>
-                          <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
-                            Product + location diye quick market fit score.
-                          </p>
-                        </div>
-                      </div>
-
-                      {panelErrors.locationAds && (
-                        <div style={{
-                          padding: '12px 14px', borderRadius: '12px', background: 'rgba(234, 67, 53, 0.08)',
-                          color: '#ea4335', border: '1px solid rgba(234, 67, 53, 0.2)', fontSize: '0.82rem'
-                        }}>
-                          {panelErrors.locationAds}
-                        </div>
-                      )}
-
-                      <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                          Supplier Product
-                        </span>
-                        <select
-                          value={selectedAdsProductId}
-                          onChange={(e) => {
-                            const productId = e.target.value;
-                            setSelectedAdsProductId(productId);
-                            setLocationAdsResult(null);
-                            handleLoadLocationHistory(productId);
-                          }}
-                          className="styled-input"
-                        >
-                          <option value="">Select approved/catalog product</option>
-                          {products.map((product) => (
-                            <option key={product.productId} value={product.productId}>
-                              {product.productName || product.sku} {product.sku ? `(${product.sku})` : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                          Test Location
-                        </span>
-                        <select
-                          value={selectedAdsLocation}
-                          onChange={(e) => setSelectedAdsLocation(e.target.value)}
-                          className="styled-input"
-                        >
-                          {locationProfiles.length === 0 && <option value="Uttara">Uttara</option>}
-                          {locationProfiles.map((profile) => (
-                            <option key={profile.profileId} value={profile.locationName}>
-                              {profile.locationName} - {profile.city}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      {selectedAdsProduct && (
-                        <div style={{
-                          display: 'grid', gridTemplateColumns: '70px 1fr', gap: '14px', padding: '14px',
-                          background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px'
-                        }}>
-                          <img
-                            src={selectedAdsProduct.imageUrl || 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=200&auto=format&fit=crop'}
-                            alt={selectedAdsProduct.productName}
-                            style={{ width: '70px', height: '70px', borderRadius: '14px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.08)' }}
-                          />
+                    {currentUser?.role === 'Supplier' ? (
+                      <div className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{
+                            width: '46px', height: '46px', borderRadius: '14px', background: 'rgba(59, 130, 246, 0.12)',
+                            border: '1px solid rgba(59, 130, 246, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: '#3b82f6'
+                          }}>
+                            <Target size={22} />
+                          </div>
                           <div>
-                            <div style={{ fontWeight: '900', color: '#fff', marginBottom: '4px' }}>{selectedAdsProduct.productName}</div>
-                            <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.78rem', marginBottom: '8px' }}>
-                              {selectedAdsProduct.brand || 'No brand'} | {selectedAdsProduct.category || 'No category'} | {selectedAdsProduct.sku}
-                            </div>
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              <span className="pill-badge pill-pending">SELL {Math.max(0, Number(selectedAdsProduct.sellOnHand || 0) - Number(selectedAdsProduct.sellReserved || 0))}</span>
-                              <span className="pill-badge pill-draft">MRP BDT {selectedAdsProduct.rpuMrp || selectedAdsProduct.basePrice || 0}</span>
-                            </div>
+                            <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Select Product</h3>
+                            <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                              Select one of your products to load the active marketing suggestions.
+                            </p>
                           </div>
                         </div>
-                      )}
 
-                      <button
-                        type="submit"
-                        disabled={locationAdsLoading}
-                        className="btn-primary"
-                        style={{ width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '10px', padding: '14px 18px' }}
-                      >
-                        {locationAdsLoading ? <RefreshCw size={16} className="spin-anim" /> : <Megaphone size={16} />}
-                        {locationAdsLoading ? 'Analyzing location...' : 'Sync Location Ads Recommendation'}
-                      </button>
-                    </form>
+                        {panelErrors.locationAds && (
+                          <div style={{
+                            padding: '12px 14px', borderRadius: '12px', background: 'rgba(234, 67, 53, 0.08)',
+                            color: '#ea4335', border: '1px solid rgba(234, 67, 53, 0.2)', fontSize: '0.82rem'
+                          }}>
+                            {panelErrors.locationAds}
+                          </div>
+                        )}
+
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Your Product
+                          </span>
+                          <select
+                            value={selectedAdsProductId}
+                            onChange={(e) => {
+                              const productId = e.target.value;
+                              setSelectedAdsProductId(productId);
+                              setLocationAdsResult(null);
+                              handleLoadLocationHistory(productId);
+                            }}
+                            className="styled-input"
+                          >
+                            <option value="">Select product</option>
+                            {products.map((product) => (
+                              <option key={product.productId} value={product.productId}>
+                                {product.productName || product.sku} {product.sku ? `(${product.sku})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        {selectedAdsProduct && (
+                          <div style={{
+                            display: 'grid', gridTemplateColumns: '70px 1fr', gap: '14px', padding: '14px',
+                            background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px'
+                          }}>
+                            <img
+                              src={selectedAdsProduct.imageUrl || 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=200&auto=format&fit=crop'}
+                              alt={selectedAdsProduct.productName}
+                              style={{ width: '70px', height: '70px', borderRadius: '14px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.08)' }}
+                            />
+                            <div>
+                              <div style={{ fontWeight: '900', color: '#fff', marginBottom: '4px' }}>{selectedAdsProduct.productName}</div>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.78rem', marginBottom: '8px' }}>
+                                {selectedAdsProduct.brand || 'No brand'} | {selectedAdsProduct.category || 'No category'} | {selectedAdsProduct.sku}
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                <span className="pill-badge pill-pending">SELL {Math.max(0, Number(selectedAdsProduct.sellOnHand || 0) - Number(selectedAdsProduct.sellReserved || 0))}</span>
+                                <span className="pill-badge pill-draft">MRP BDT {selectedAdsProduct.rpuMrp || selectedAdsProduct.basePrice || 0}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <form onSubmit={handleAnalyzeLocationAds} className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{
+                            width: '46px', height: '46px', borderRadius: '14px', background: 'rgba(59, 130, 246, 0.12)',
+                            border: '1px solid rgba(59, 130, 246, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: '#3b82f6'
+                          }}>
+                            <Target size={22} />
+                          </div>
+                          <div>
+                            <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Run Location Test</h3>
+                            <p style={{ margin: '4px 0 0', color: 'hsl(var(--text-muted))', fontSize: '0.82rem' }}>
+                              Product + location diye quick market fit score.
+                            </p>
+                          </div>
+                        </div>
+
+                        {panelErrors.locationAds && (
+                          <div style={{
+                            padding: '12px 14px', borderRadius: '12px', background: 'rgba(234, 67, 53, 0.08)',
+                            color: '#ea4335', border: '1px solid rgba(234, 67, 53, 0.2)', fontSize: '0.82rem'
+                          }}>
+                            {panelErrors.locationAds}
+                          </div>
+                        )}
+
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Supplier Product
+                          </span>
+                          <select
+                            value={selectedAdsProductId}
+                            onChange={(e) => {
+                              const productId = e.target.value;
+                              setSelectedAdsProductId(productId);
+                              setLocationAdsResult(null);
+                              handleLoadLocationHistory(productId);
+                            }}
+                            className="styled-input"
+                          >
+                            <option value="">Select approved/catalog product</option>
+                            {products.map((product) => (
+                              <option key={product.productId} value={product.productId}>
+                                {product.productName || product.sku} {product.sku ? `(${product.sku})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Test Location
+                          </span>
+                          <select
+                            value={selectedAdsLocation}
+                            onChange={(e) => setSelectedAdsLocation(e.target.value)}
+                            className="styled-input"
+                          >
+                            {locationProfiles.length === 0 && <option value="Uttara">Uttara</option>}
+                            {locationProfiles.map((profile) => (
+                              <option key={profile.profileId} value={profile.locationName}>
+                                {profile.locationName} - {profile.city}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        {selectedAdsProduct && (
+                          <div style={{
+                            display: 'grid', gridTemplateColumns: '70px 1fr', gap: '14px', padding: '14px',
+                            background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px'
+                          }}>
+                            <img
+                              src={selectedAdsProduct.imageUrl || 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=200&auto=format&fit=crop'}
+                              alt={selectedAdsProduct.productName}
+                              style={{ width: '70px', height: '70px', borderRadius: '14px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.08)' }}
+                            />
+                            <div>
+                              <div style={{ fontWeight: '900', color: '#fff', marginBottom: '4px' }}>{selectedAdsProduct.productName}</div>
+                              <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.78rem', marginBottom: '8px' }}>
+                                {selectedAdsProduct.brand || 'No brand'} | {selectedAdsProduct.category || 'No category'} | {selectedAdsProduct.sku}
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                <span className="pill-badge pill-pending">SELL {Math.max(0, Number(selectedAdsProduct.sellOnHand || 0) - Number(selectedAdsProduct.sellReserved || 0))}</span>
+                                <span className="pill-badge pill-draft">MRP BDT {selectedAdsProduct.rpuMrp || selectedAdsProduct.basePrice || 0}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        <button
+                          type="submit"
+                          disabled={locationAdsLoading}
+                          className="btn-primary"
+                          style={{ width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '10px', padding: '14px 18px' }}
+                        >
+                          {locationAdsLoading ? <RefreshCw size={16} className="spin-anim" /> : <Megaphone size={16} />}
+                          {locationAdsLoading ? 'Analyzing location...' : 'Sync Location Ads Recommendation'}
+                        </button>
+                      </form>
+                    )}
 
                     <div className="glass-card-premium">
                       {!activeLocationSuggestion ? (
@@ -3572,6 +4113,27 @@ export default function AdminDashboard({ currentUser }) {
                               </tbody>
                             </table>
                           </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowPaymentModal(true)}
+                            className="btn-primary"
+                            style={{
+                              marginTop: '24px',
+                              width: '100%',
+                              justifyContent: 'center',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              padding: '14px 18px',
+                              background: 'linear-gradient(135deg, #34a853, #10b981)',
+                              border: 'none',
+                              fontWeight: '700'
+                            }}
+                          >
+                            <DollarSign size={16} />
+                            Proceed to Budget Payment Confirmation
+                          </button>
                         </div>
                       )}
                     </div>
@@ -3665,46 +4227,66 @@ export default function AdminDashboard({ currentUser }) {
                                 {new Date(order.createdAt).toLocaleString()}
                               </td>
                               <td>
-                                {order.status === 'PENDING' && (
-                                  <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button
-                                      onClick={() => handleConfirmOrder(order.orderRef)}
-                                      style={{
-                                        padding: '6px 12px',
-                                        fontSize: '0.75rem',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                        background: 'rgba(52, 168, 83, 0.15)',
-                                        color: '#34a853',
-                                        border: '1px solid rgba(52, 168, 83, 0.3)',
-                                        borderRadius: '6px',
-                                        cursor: 'pointer',
-                                        fontWeight: '700'
-                                      }}
-                                    >
-                                      <Check size={12} /> Confirm
-                                    </button>
-                                    <button
-                                      onClick={() => handleCancelOrder(order.orderRef)}
-                                      style={{
-                                        padding: '6px 12px',
-                                        fontSize: '0.75rem',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                        background: 'rgba(234, 67, 53, 0.15)',
-                                        color: '#ea4335',
-                                        border: '1px solid rgba(234, 67, 53, 0.3)',
-                                        borderRadius: '6px',
-                                        cursor: 'pointer',
-                                        fontWeight: '700'
-                                      }}
-                                    >
-                                      <X size={12} /> Cancel
-                                    </button>
-                                  </div>
-                                )}
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button
+                                    onClick={() => viewOrderDetails(order.orderRef)}
+                                    style={{
+                                      padding: '6px 12px',
+                                      fontSize: '0.75rem',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      background: 'rgba(255, 255, 255, 0.05)',
+                                      color: '#fff',
+                                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      fontWeight: '700'
+                                    }}
+                                  >
+                                    View
+                                  </button>
+                                  {order.status === 'PENDING' && (
+                                    <>
+                                      <button
+                                        onClick={() => handleConfirmOrder(order.orderRef)}
+                                        style={{
+                                          padding: '6px 12px',
+                                          fontSize: '0.75rem',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px',
+                                          background: 'rgba(52, 168, 83, 0.15)',
+                                          color: '#34a853',
+                                          border: '1px solid rgba(52, 168, 83, 0.3)',
+                                          borderRadius: '6px',
+                                          cursor: 'pointer',
+                                          fontWeight: '700'
+                                        }}
+                                      >
+                                        <Check size={12} /> Confirm
+                                      </button>
+                                      <button
+                                        onClick={() => handleCancelOrder(order.orderRef)}
+                                        style={{
+                                          padding: '6px 12px',
+                                          fontSize: '0.75rem',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px',
+                                          background: 'rgba(234, 67, 53, 0.15)',
+                                          color: '#ea4335',
+                                          border: '1px solid rgba(234, 67, 53, 0.3)',
+                                          borderRadius: '6px',
+                                          cursor: 'pointer',
+                                          fontWeight: '700'
+                                        }}
+                                      >
+                                        <X size={12} /> Cancel
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           ))
@@ -3827,7 +4409,7 @@ export default function AdminDashboard({ currentUser }) {
                         </div>
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '24px' }}>
+                      <div className="revenue-grid">
                         {/* PRODUCT PERFORMANCE */}
                         <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -3887,7 +4469,7 @@ export default function AdminDashboard({ currentUser }) {
                         </div>
 
                         {/* SUPPLIER PERFORMANCE */}
-                        <div className="glass-card" style={{ padding: '24px' }}>
+                        <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
                           <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', marginBottom: '20px' }}>Supplier Rankings</h3>
                           
                           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }} className="styled-table">
@@ -3995,7 +4577,7 @@ export default function AdminDashboard({ currentUser }) {
                       </div>
 
                       {/* CAMPAIGN ROI ANALYTICS */}
-                      <div className="glass-card" style={{ padding: '24px', marginTop: '24px' }}>
+                      <div className="glass-card" style={{ padding: '24px', marginTop: '24px', overflowX: 'auto' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                           <div>
                             <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -4135,7 +4717,7 @@ export default function AdminDashboard({ currentUser }) {
                         </div>
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '24px' }}>
+                      <div className="commissions-grid">
                         {/* GLOBAL DEFAULT & OVERRIDES RULES MANAGER */}
                         <div className="glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                           <div>
@@ -4223,7 +4805,7 @@ export default function AdminDashboard({ currentUser }) {
                         </div>
 
                         {/* ACTIVE RULES LIST */}
-                        <div className="glass-card" style={{ padding: '24px', overflowY: 'auto', maxHeight: '420px' }}>
+                        <div className="glass-card" style={{ padding: '24px', overflow: 'auto', maxHeight: '420px' }}>
                           <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', marginBottom: '16px' }}>Active Commission Overrides</h3>
                           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }} className="styled-table">
                             <thead>
@@ -4266,7 +4848,7 @@ export default function AdminDashboard({ currentUser }) {
                       </div>
 
                       {/* TRANSACTIONS LEDGER */}
-                      <div className="glass-card" style={{ padding: '24px' }}>
+                      <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                           <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff', margin: 0 }}>Ledger Postings</h3>
                           
@@ -4992,6 +5574,502 @@ export default function AdminDashboard({ currentUser }) {
                 </div>
               )}
 
+              {/* TAB: GRN INTAKE LOGISTICS */}
+              {activeTab === 'grn' && (
+                <div className="tab-animation" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#fff', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <Layers style={{ color: 'hsl(var(--primary))' }} size={28} />
+                        Goods Received Notes (Inbound Cargo)
+                      </h2>
+                      <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem', marginTop: '4px' }}>
+                        Initialize Goods Received Notes (GRN) for supplier shipments, perform QC inspections, and import approved batches.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowCreateGrnModal(true);
+                        setNewGrnForm({ supplierEmail: '', invoiceNumber: '', notes: '', items: [] });
+                      }}
+                      className="btn-primary"
+                      style={{ padding: '12px 20px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: '700' }}
+                    >
+                      <UserPlus size={16} />
+                      Receive New Cargo (GRN)
+                    </button>
+                  </div>
+
+                  <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
+                    {grnsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+                        <div className="spin-anim" style={{ width: '30px', height: '30px', border: '3px solid rgba(255,255,255,0.06)', borderTopColor: 'hsl(var(--primary))', borderRadius: '50%' }} />
+                      </div>
+                    ) : grns.length === 0 ? (
+                      <div style={{ padding: '60px 20px', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>
+                        <Layers size={48} style={{ color: 'rgba(255,255,255,0.05)', marginBottom: '16px' }} />
+                        <p style={{ fontSize: '1rem', fontWeight: '500' }}>No Goods Received Notes recorded.</p>
+                        <p style={{ fontSize: '0.82rem', marginTop: '4px' }}>Click "Receive New Cargo" above to record inbound supplier stock.</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        {grns.map((grn) => (
+                          <div key={grn.grnId} className="glass-card" style={{ padding: '20px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '12px', marginBottom: '12px' }}>
+                              <div>
+                                <span style={{ fontFamily: 'monospace', fontWeight: '800', color: 'hsl(var(--primary))', fontSize: '1rem' }}>
+                                  {grn.grnNumber}
+                                </span>
+                                <span style={{ marginLeft: '12px', fontSize: '0.8rem', color: 'hsl(var(--text-muted))' }}>
+                                  Received: {new Date(grn.receivedDate).toLocaleString()}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span className={`pill-badge ${grn.status === 'COMPLETED' ? 'pill-approved' : grn.status === 'REJECTED' ? 'pill-rejected' : 'pill-submitted'}`}>
+                                  {grn.status}
+                                </span>
+                                {grn.status === 'PENDING' && (
+                                  <button
+                                    onClick={() => {
+                                      setSelectedGrnForQc(grn);
+                                      setQcFormItems(grn.items.map(item => ({
+                                        grnItemId: item.grnItemId,
+                                        productId: item.productId,
+                                        productName: item.productName,
+                                        batchNumber: item.batchNumber,
+                                        qtyReceived: item.qtyReceived,
+                                        qtyAccepted: item.qtyReceived,
+                                        qtyRejected: 0,
+                                        qcStatus: 'PASSED',
+                                        qcNotes: ''
+                                      })));
+                                      setShowQcGrnModal(true);
+                                    }}
+                                    className="btn-primary"
+                                    style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.8rem' }}
+                                  >
+                                    Perform QC Verdict
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', marginBottom: '14px' }}>
+                              <div><strong>Supplier:</strong> {grn.supplierEmail}</div>
+                              <div><strong>Invoice No:</strong> {grn.invoiceNumber || '—'}</div>
+                              <div><strong>Total Qty:</strong> {grn.totalQtyReceived} units</div>
+                              <div><strong>Received By:</strong> {grn.receivedByEmail}</div>
+                            </div>
+                            {grn.notes && <div style={{ fontSize: '0.82rem', fontStyle: 'italic', color: 'hsl(var(--text-muted))', marginBottom: '14px', background: 'rgba(0,0,0,0.1)', padding: '8px 12px', borderRadius: '8px' }}><strong>Note:</strong> {grn.notes}</div>}
+
+                            <div className="premium-table-container">
+                              <table className="premium-table" style={{ fontSize: '0.82rem' }}>
+                                <thead>
+                                  <tr>
+                                    <th>Product ID / Name</th>
+                                    <th>Batch Number</th>
+                                    <th>Expiry Date</th>
+                                    <th>Qty Received</th>
+                                    <th>Qty Accepted</th>
+                                    <th>Qty Rejected</th>
+                                    <th>QC Status</th>
+                                    <th>QC Notes</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {grn.items && grn.items.map((item, idx) => (
+                                    <tr key={idx}>
+                                      <td style={{ fontWeight: '700', color: '#fff' }}>
+                                        {item.productName} <span style={{ fontWeight: 'normal', color: 'hsl(var(--text-muted))' }}>(#{item.productId})</span>
+                                      </td>
+                                      <td style={{ fontFamily: 'monospace' }}>{item.batchNumber}</td>
+                                      <td>{item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : 'No Expiry'}</td>
+                                      <td style={{ fontWeight: '700' }}>{item.qtyReceived}</td>
+                                      <td style={{ color: '#34a853', fontWeight: '700' }}>{item.qtyAccepted}</td>
+                                      <td style={{ color: '#ea4335', fontWeight: '700' }}>{item.qtyRejected}</td>
+                                      <td>
+                                        <span className={`pill-badge ${item.qcStatus === 'PASSED' ? 'pill-approved' : item.qcStatus === 'FAILED' ? 'pill-rejected' : 'pill-submitted'}`}>
+                                          {item.qcStatus}
+                                        </span>
+                                      </td>
+                                      <td>{item.qcNotes || '—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: RETURNS & REFUNDS (REVERSE LOGISTICS) */}
+              {activeTab === 'returns' && (
+                <div className="tab-animation" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                  <div style={{ marginBottom: '8px' }}>
+                    <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#fff', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <RefreshCw style={{ color: 'hsl(var(--primary))' }} size={28} />
+                      Returns & Refunds (Reverse Logistics)
+                    </h2>
+                    <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem', marginTop: '4px' }}>
+                      Approve returned stock to warehouse MASTER ledger (QC check) or sellable SELL ledger, reverse supplier commissions atomically, and process payout refunds.
+                    </p>
+                  </div>
+
+                  <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
+                    {returnsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+                        <div className="spin-anim" style={{ width: '30px', height: '30px', border: '3px solid rgba(255,255,255,0.06)', borderTopColor: 'hsl(var(--primary))', borderRadius: '50%' }} />
+                      </div>
+                    ) : returnRequests.length === 0 ? (
+                      <div style={{ padding: '60px 20px', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>
+                        <RefreshCw size={48} style={{ color: 'rgba(255,255,255,0.05)', marginBottom: '16px' }} />
+                        <p style={{ fontSize: '1rem', fontWeight: '500' }}>No return requests found.</p>
+                        <p style={{ fontSize: '0.82rem', marginTop: '4px' }}>Customer returns and cancellation requests will be listed here.</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        {returnRequests.map((ret) => (
+                          <div key={ret.returnRequestId} className="glass-card" style={{ padding: '20px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '12px', marginBottom: '12px' }}>
+                              <div>
+                                <span style={{ fontWeight: '800', color: 'hsl(var(--primary))', fontSize: '1rem' }}>
+                                  Return #{ret.returnRequestId}
+                                </span>
+                                <span style={{ marginLeft: '12px', fontSize: '0.85rem', color: '#fff', fontWeight: '600' }}>
+                                  Order Ref: {ret.orderRef}
+                                </span>
+                                <span style={{ marginLeft: '12px', fontSize: '0.8rem', color: 'hsl(var(--text-muted))' }}>
+                                  Submitted: {new Date(ret.createdAt).toLocaleString()}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span className={`pill-badge ${ret.status === 'REFUNDED' ? 'pill-approved' : ret.status === 'APPROVED' ? 'pill-pending' : ret.status === 'REJECTED' ? 'pill-rejected' : ret.status === 'PARTIAL_RETURN' ? 'pill-pending' : 'pill-submitted'}`}>
+                                  {ret.status}
+                                </span>
+                                {ret.status === 'PENDING' && (
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                      onClick={() => {
+                                        const target = prompt('Select target ledger for stock reversion: Type "MASTER" (for warehouse QC holding) or "SELL" (for immediate resellable stock):', 'MASTER');
+                                        if (target === 'MASTER' || target === 'SELL') {
+                                          handleApproveReturn(ret.returnRequestId, target);
+                                        } else if (target !== null) {
+                                          alert('Invalid ledger type. Use MASTER or SELL.');
+                                        }
+                                      }}
+                                      className="btn-primary"
+                                      style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.8rem', background: '#34a853' }}
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setSelectedReturnForReject(ret);
+                                        setRejectReturnReason('');
+                                        setShowRejectReturnModal(true);
+                                      }}
+                                      className="btn-secondary"
+                                      style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.8rem', color: '#ea4335', borderColor: 'rgba(234, 67, 53, 0.3)' }}
+                                    >
+                                      Reject
+                                    </button>
+                                  </div>
+                                )}
+                                {ret.status === 'APPROVED' && (
+                                  <button
+                                    onClick={() => handleProcessRefund(ret.returnRequestId)}
+                                    className="btn-primary"
+                                    style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.8rem', background: 'hsl(var(--primary))', color: 'hsl(var(--bg-dark))' }}
+                                  >
+                                    Process Refund Payout & Reverse Commission
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', fontSize: '0.85rem', color: 'hsl(var(--text-secondary))', marginBottom: '14px' }}>
+                              <div><strong>Customer:</strong> {ret.customerEmail}</div>
+                              <div><strong>Refund Method:</strong> {ret.refundMethod || 'STORE_CREDIT'}</div>
+                              <div><strong>Type:</strong> {ret.cancellationType || 'PARTIAL_RETURN'}</div>
+                              <div><strong>Total Refund:</strong> ৳{ret.refundTotal} BDT</div>
+                            </div>
+                            {ret.reason && <div style={{ fontSize: '0.82rem', fontStyle: 'italic', color: 'hsl(var(--text-muted))', marginBottom: '14px', background: 'rgba(0,0,0,0.1)', padding: '8px 12px', borderRadius: '8px' }}><strong>Reason:</strong> {ret.reason}</div>}
+                            {ret.rejectReason && <div style={{ fontSize: '0.82rem', color: '#ea4335', marginBottom: '14px', background: 'rgba(234,67,53,0.04)', border: '1px solid rgba(234,67,53,0.1)', padding: '8px 12px', borderRadius: '8px' }}><strong>Rejection Comment:</strong> {ret.rejectReason}</div>}
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '20px', alignItems: 'start' }}>
+                              <div className="premium-table-container">
+                                <table className="premium-table" style={{ fontSize: '0.82rem' }}>
+                                  <thead>
+                                    <tr>
+                                      <th>Product Details</th>
+                                      <th>Quantity</th>
+                                      <th style={{ textAlign: 'right' }}>Refund Amount</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {ret.items && ret.items.map((item, idx) => (
+                                      <tr key={idx}>
+                                        <td style={{ fontWeight: '700', color: '#fff' }}>{item.productName} <span style={{ fontWeight: 'normal', color: 'hsl(var(--text-muted))' }}>(#{item.productId})</span></td>
+                                        <td>{item.qty}</td>
+                                        <td style={{ textAlign: 'right', fontWeight: '700', color: 'hsl(var(--primary))' }}>৳{item.refundLineAmount} BDT</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+
+                              <div style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '14px', padding: '16px' }}>
+                                <h4 style={{ margin: '0 0 10px 0', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#fff', fontWeight: '800' }}>Audit Timeline / Transitions</h4>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '120px', overflowY: 'auto' }}>
+                                  {ret.auditLog ? (
+                                    ret.auditLog.map((log, lIdx) => (
+                                      <div key={lIdx} style={{ fontSize: '0.74rem', borderLeft: '2px solid hsl(var(--primary))', paddingLeft: '8px', display: 'flex', flexDirection: 'column' }}>
+                                        <span style={{ color: '#fff', fontWeight: '600' }}>{log.action} by {log.user}</span>
+                                        <span style={{ color: 'hsl(var(--text-muted))' }}>{new Date(log.timestamp).toLocaleString()}</span>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <span style={{ fontSize: '0.75rem', fontStyle: 'italic', color: 'hsl(var(--text-muted))' }}>No audit timeline records.</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: PROMOTIONS & CAMPAIGNS */}
+              {activeTab === 'promotions' && (
+                <div className="tab-animation" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                  {/* Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#fff', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <Tag style={{ color: 'hsl(var(--primary))' }} size={28} />
+                        Promotions & Campaign Manager
+                      </h2>
+                      <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem', marginTop: '4px' }}>
+                        Create coupon codes, set discount rules, manage validity windows, and track usage analytics.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowCreatePromoModal(true)}
+                      className="btn-primary"
+                      style={{ padding: '12px 20px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700' }}
+                    >
+                      <PlusCircle size={16} /> New Promotion
+                    </button>
+                  </div>
+
+                  {/* Metrics Summary Row */}
+                  {!promotionsLoading && promotions.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
+                      {[
+                        { label: 'Total Campaigns', value: promotions.length, icon: <Tag size={20} />, color: 'hsl(var(--primary))' },
+                        { label: 'Active Campaigns', value: promotions.filter(p => p.isActive).length, icon: <ToggleRight size={20} />, color: '#34a853' },
+                        { label: 'Total Usages', value: promotions.reduce((sum, p) => sum + (p.usageCount || 0), 0), icon: <Hash size={20} />, color: '#fbbc05' },
+                        { label: 'Expired / Inactive', value: promotions.filter(p => !p.isActive || new Date(p.endDate) < new Date()).length, icon: <ToggleLeft size={20} />, color: '#ea4335' },
+                      ].map((m, i) => (
+                        <div key={i} className="glass-card" style={{ padding: '20px', textAlign: 'center' }}>
+                          <div style={{ color: m.color, marginBottom: '8px', display: 'flex', justifyContent: 'center' }}>{m.icon}</div>
+                          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#fff' }}>{m.value}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', marginTop: '4px' }}>{m.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Promotions Table */}
+                  <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
+                    {promotionsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+                        <div className="spin-anim" style={{ width: '30px', height: '30px', border: '3px solid rgba(255,255,255,0.06)', borderTopColor: 'hsl(var(--primary))', borderRadius: '50%' }} />
+                      </div>
+                    ) : promotions.length === 0 ? (
+                      <div style={{ padding: '60px 20px', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>
+                        <Tag size={48} style={{ color: 'rgba(255,255,255,0.05)', marginBottom: '16px' }} />
+                        <p style={{ fontSize: '1rem', fontWeight: '500' }}>No promotions created yet.</p>
+                        <p style={{ fontSize: '0.82rem', marginTop: '4px' }}>Click "New Promotion" above to create your first coupon or discount campaign.</p>
+                      </div>
+                    ) : (
+                      <table className="premium-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Code & Name</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Type</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Discount</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Min. Order</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Validity Window</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Usage</th>
+                            <th style={{ textAlign: 'center', padding: '10px 12px' }}>Status</th>
+                            <th style={{ textAlign: 'center', padding: '10px 12px' }}>Toggle</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {promotions.map(promo => {
+                            const now = new Date();
+                            const isExpired = new Date(promo.endDate) < now;
+                            const usagePct = promo.maxUsageLimit ? Math.round((promo.usageCount / promo.maxUsageLimit) * 100) : null;
+                            const statusColor = !promo.isActive ? '#ea4335' : isExpired ? '#fbbc05' : '#34a853';
+                            const statusLabel = !promo.isActive ? 'Inactive' : isExpired ? 'Expired' : 'Active';
+                            return (
+                              <tr key={promo.promoId} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                <td style={{ padding: '14px 12px' }}>
+                                  <div style={{ fontFamily: 'monospace', fontWeight: '800', color: 'hsl(var(--primary))', fontSize: '0.9rem' }}>{promo.promoCode}</div>
+                                  <div style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.78rem', marginTop: '2px' }}>{promo.promoName}</div>
+                                </td>
+                                <td style={{ padding: '14px 12px' }}>
+                                  <span style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '4px', padding: '3px 8px', fontWeight: '700', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    {promo.promoType}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '14px 12px', fontWeight: '800', color: '#fff' }}>
+                                  {promo.promoType === 'PERCENTAGE' ? `${promo.discountValue}%` : `৳${parseFloat(promo.discountValue).toFixed(0)}`}
+                                </td>
+                                <td style={{ padding: '14px 12px', color: 'hsl(var(--text-secondary))' }}>
+                                  {promo.minOrderAmount > 0 ? `৳${parseFloat(promo.minOrderAmount).toFixed(0)}` : '—'}
+                                  {promo.minOrderQty > 0 ? ` / ${promo.minOrderQty} items` : ''}
+                                </td>
+                                <td style={{ padding: '14px 12px', fontSize: '0.78rem', color: 'hsl(var(--text-secondary))' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <Calendar size={12} />
+                                    {new Date(promo.startDate).toLocaleDateString()} {' → '} {new Date(promo.endDate).toLocaleDateString()}
+                                  </div>
+                                </td>
+                                <td style={{ padding: '14px 12px' }}>
+                                  <div style={{ fontSize: '0.8rem', fontWeight: '700', color: '#fff', marginBottom: '5px' }}>
+                                    {promo.usageCount}{promo.maxUsageLimit ? ` / ${promo.maxUsageLimit}` : ' uses'}
+                                  </div>
+                                  {usagePct !== null && (
+                                    <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '99px', height: '5px', width: '80px', overflow: 'hidden' }}>
+                                      <div style={{ width: `${Math.min(usagePct, 100)}%`, height: '100%', background: usagePct > 90 ? '#ea4335' : usagePct > 60 ? '#fbbc05' : 'hsl(var(--primary))', borderRadius: '99px', transition: 'width 0.5s ease' }} />
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={{ padding: '14px 12px', textAlign: 'center' }}>
+                                  <span style={{ background: `${statusColor}22`, color: statusColor, border: `1px solid ${statusColor}55`, borderRadius: '6px', padding: '3px 10px', fontSize: '0.72rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                                    {statusLabel}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '14px 12px', textAlign: 'center' }}>
+                                  <button
+                                    onClick={() => handleTogglePromoStatus(promo.promoId)}
+                                    disabled={promoTogglingId === promo.promoId}
+                                    title={promo.isActive ? 'Deactivate this promotion' : 'Activate this promotion'}
+                                    style={{
+                                      background: 'none', border: 'none', cursor: 'pointer', padding: '6px',
+                                      transition: 'all 0.2s ease', borderRadius: '6px',
+                                      opacity: promoTogglingId === promo.promoId ? 0.5 : 1
+                                    }}
+                                  >
+                                    {promo.isActive
+                                      ? <ToggleRight size={26} style={{ color: '#34a853' }} />
+                                      : <ToggleLeft size={26} style={{ color: 'rgba(255,255,255,0.25)' }} />
+                                    }
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'aiPricing' && (
+                <div className="tab-animation" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#fff', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <Sliders style={{ color: 'hsl(var(--primary))' }} size={28} />
+                        AI Daily Picks & Dynamic Pricing Approval
+                      </h2>
+                      <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem', marginTop: '4px' }}>
+                        Review and approve AI-generated dynamic pricing optimized for demand, stock levels, and supplier costs.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
+                    {aiPicksLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+                        <div className="spin-anim" style={{ width: '30px', height: '30px', border: '3px solid rgba(255,255,255,0.06)', borderTopColor: 'hsl(var(--primary))', borderRadius: '50%' }} />
+                      </div>
+                    ) : aiPicks.length === 0 ? (
+                      <div style={{ padding: '60px 20px', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>
+                        <Sliders size={48} style={{ color: 'rgba(255,255,255,0.05)', marginBottom: '16px' }} />
+                        <p style={{ fontSize: '1rem', fontWeight: '500' }}>No pending dynamic pricing reviews.</p>
+                        <p style={{ fontSize: '0.82rem', marginTop: '4px' }}>AI runs daily optimizations. Check back later.</p>
+                      </div>
+                    ) : (
+                      <table className="premium-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Product</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Supplier Cost</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Current Price</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>AI Recommended Price</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Sales Volume</th>
+                            <th style={{ textAlign: 'left', padding: '10px 12px' }}>Stock Status</th>
+                            <th style={{ textAlign: 'center', padding: '10px 12px' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {aiPicks.map(item => (
+                            <tr key={item.productId} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                              <td style={{ padding: '14px 12px' }}>
+                                <div style={{ fontWeight: '700', color: '#fff', fontSize: '0.9rem' }}>{item.productName}</div>
+                                <div style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.75rem', marginTop: '2px' }}>SKU: {item.sku}</div>
+                              </td>
+                              <td style={{ padding: '14px 12px', color: 'hsl(var(--text-secondary))' }}>
+                                ৳{parseFloat(item.supplierCost || 0).toFixed(2)}
+                              </td>
+                              <td style={{ padding: '14px 12px', color: 'hsl(var(--text-secondary))' }}>
+                                ৳{parseFloat(item.currentPrice || 0).toFixed(2)}
+                              </td>
+                              <td style={{ padding: '14px 12px', fontWeight: '800', color: 'hsl(var(--primary))', fontSize: '0.95rem' }}>
+                                ৳{parseFloat(item.recommendedPrice || 0).toFixed(2)}
+                              </td>
+                              <td style={{ padding: '14px 12px' }}>
+                                <span style={{ 
+                                  background: item.salesVolume > 5 ? 'rgba(234,67,53,0.15)' : 'rgba(52,168,83,0.15)', 
+                                  color: item.salesVolume > 5 ? '#ea4335' : '#34a853',
+                                  borderRadius: '4px', padding: '3px 8px', fontWeight: '700' 
+                                }}>
+                                  {item.salesVolume > 5 ? 'High Demand' : 'Normal'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '14px 12px', color: item.availableStock < 10 ? '#ea4335' : '#fff' }}>
+                                {item.availableStock} units
+                              </td>
+                              <td style={{ padding: '14px 12px', textAlign: 'center' }}>
+                                <button
+                                  onClick={() => handleApproveAiPrice(item.productId, item.recommendedPrice)}
+                                  className="btn-primary"
+                                  style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                  <Check size={14} /> Approve
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -5257,6 +6335,841 @@ export default function AdminDashboard({ currentUser }) {
                   style={{ flex: 1, padding: '12px', fontWeight: '800' }}
                 >
                   Renew License
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Order Details Modal */}
+      {selectedOrderForDetails && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.8)', backdropFilter: 'blur(10px)',
+          zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s ease'
+        }}>
+          <div className="glass-card-premium" style={{ width: '100%', maxWidth: '700px', padding: '32px', border: '1px solid rgba(255,255,255,0.08)', position: 'relative', overflow: 'hidden' }}>
+            <button 
+              onClick={() => setSelectedOrderForDetails(null)} 
+              style={{ position: 'absolute', top: '20px', right: '20px', background: 'none', border: 'none', color: 'hsl(var(--text-muted))', cursor: 'pointer' }}
+            >
+              <X size={20} />
+            </button>
+            
+            <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#fff', marginBottom: '8px' }}>
+              Order Details: {selectedOrderForDetails.orderRef}
+            </h3>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px', fontSize: '0.9rem' }}>
+              <div>
+                <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.75rem', textTransform: 'uppercase', fontWeight: '800' }}>Customer Email</div>
+                <div style={{ color: '#fff', fontWeight: '700', marginTop: '2px' }}>{selectedOrderForDetails.customerEmail}</div>
+              </div>
+              <div>
+                <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.75rem', textTransform: 'uppercase', fontWeight: '800' }}>Status</div>
+                <div style={{ marginTop: '2px' }}>
+                  <span className={`pill-badge ${selectedOrderForDetails.status === 'CONFIRMED' ? 'pill-approved' : selectedOrderForDetails.status === 'CANCELLED' ? 'pill-rejected' : 'pill-submitted'}`}>
+                    {selectedOrderForDetails.status}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.75rem', textTransform: 'uppercase', fontWeight: '800' }}>Total Amount</div>
+                <div style={{ color: 'hsl(var(--primary))', fontWeight: '800', marginTop: '2px' }}>৳{selectedOrderForDetails.totalAmount}</div>
+              </div>
+              <div>
+                <div style={{ color: 'hsl(var(--text-muted))', fontSize: '0.75rem', textTransform: 'uppercase', fontWeight: '800' }}>Paid Amount</div>
+                <div style={{ color: '#fff', fontWeight: '700', marginTop: '2px' }}>৳{selectedOrderForDetails.paidAmount || '0.00'} ({selectedOrderForDetails.paymentStatus})</div>
+              </div>
+            </div>
+
+            <h4 style={{ fontSize: '1.05rem', color: '#fff', marginBottom: '12px', fontWeight: '700' }}>Items ordered</h4>
+            <div className="premium-table-container" style={{ marginBottom: '24px', maxHeight: '200px', overflowY: 'auto' }}>
+              <table className="premium-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Qty</th>
+                    <th>Price</th>
+                    <th style={{ textAlign: 'right' }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedOrderForDetails.items && selectedOrderForDetails.items.map((item, idx) => {
+                    const prod = products.find(p => p.productId === item.productId);
+                    return (
+                      <tr key={idx}>
+                        <td style={{ color: '#fff', fontWeight: '700' }}>
+                          {prod ? prod.productName : `Product #${item.productId}`}
+                          <span style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-muted))', fontFamily: 'monospace' }}>
+                            {prod ? `SKU: ${prod.sku}` : ''}
+                          </span>
+                        </td>
+                        <td>{item.qty}</td>
+                        <td>৳{item.unitPrice}</td>
+                        <td style={{ textAlign: 'right', fontWeight: '700', color: 'hsl(var(--primary))' }}>৳{item.lineTotal}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button 
+                type="button" 
+                onClick={() => setSelectedOrderForDetails(null)} 
+                className="btn-secondary" 
+                style={{ padding: '10px 20px', fontSize: '0.875rem' }}
+              >
+                Close
+              </button>
+              {selectedOrderForDetails.status === 'CONFIRMED' && (
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setShowCreateReturnModal(true);
+                    setNewReturnForm({
+                      items: selectedOrderForDetails.items.map(item => ({
+                        productId: item.productId,
+                        qty: item.qty,
+                        maxQty: item.qty,
+                        unitPrice: item.unitPrice,
+                        selected: true
+                      })),
+                      reason: '',
+                      refundMethod: 'CASH',
+                      cancellationType: 'PARTIAL_RETURN'
+                    });
+                  }}
+                  className="btn-primary" 
+                  style={{ padding: '10px 20px', fontSize: '0.875rem', background: '#ea4335', color: '#fff' }}
+                >
+                  Request Return / Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ads Suggestion & Payment Modal */}
+      {showPaymentModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.82)', backdropFilter: 'blur(12px)',
+          zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s ease'
+        }}>
+          <div className="glass-card-premium" style={{ width: '90%', maxWidth: '500px', padding: '32px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+              <div>
+                <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Wallet style={{ color: 'hsl(var(--primary))' }} size={22} />
+                  Budget Payment Confirmation
+                </h3>
+                <p style={{ color: 'hsl(var(--text-muted))', fontSize: '0.82rem', margin: '4px 0 0' }}>
+                  Confirm funding for your local marketing campaign.
+                </p>
+              </div>
+              <button 
+                onClick={() => setShowPaymentModal(false)} 
+                className="btn-secondary" 
+                style={{ padding: '6px', minWidth: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmBudgetPayment} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Confirm Amount (BDT)
+                </span>
+                <input
+                  type="number"
+                  required
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  className="styled-input"
+                  placeholder="e.g. 3000"
+                  min="1"
+                  max="1000000"
+                />
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: '800', color: 'hsl(var(--text-secondary))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Transaction Notes / Reference
+                </span>
+                <textarea
+                  required
+                  value={paymentNotes}
+                  onChange={(e) => setPaymentNotes(e.target.value)}
+                  className="styled-input"
+                  style={{ minHeight: '80px', resize: 'vertical' }}
+                  placeholder="Add deposit payment method/transaction ID reference details"
+                />
+              </label>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentModal(false)}
+                  className="btn-secondary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={paymentLoading}
+                  className="btn-primary"
+                  style={{ flex: 2, justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '8px', background: 'linear-gradient(135deg, #34a853, #10b981)', border: 'none' }}
+                >
+                  {paymentLoading ? <RefreshCw size={14} className="spin-anim" /> : <Check size={14} />}
+                  {paymentLoading ? 'Confirming...' : 'Confirm Payment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Return Request Modal */}
+      {showCreateReturnModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.82)', backdropFilter: 'blur(12px)',
+          zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s ease'
+        }}>
+          <div className="glass-card-premium" style={{ width: '90%', maxWidth: '580px', padding: '32px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#fff', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <RefreshCw style={{ color: 'hsl(var(--primary))' }} size={22} />
+              Request Order Return / Cancellation
+            </h3>
+            
+            <form onSubmit={handleCreateReturnRequest}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase' }}>Cancellation Type</label>
+                <select 
+                  value={newReturnForm.cancellationType}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setNewReturnForm(prev => {
+                      const updatedItems = prev.items.map(item => ({
+                        ...item,
+                        qty: val === 'FULL_CANCELLATION' ? item.maxQty : item.qty,
+                        selected: val === 'FULL_CANCELLATION' ? true : item.selected
+                      }));
+                      return { ...prev, cancellationType: val, items: updatedItems };
+                    });
+                  }}
+                  className="styled-input"
+                >
+                  <option value="PARTIAL_RETURN">Partial Return (Select Items)</option>
+                  <option value="FULL_CANCELLATION">Full Cancellation (Entire Order)</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase' }}>Refund Method</label>
+                <select 
+                  value={newReturnForm.refundMethod}
+                  onChange={(e) => setNewReturnForm(prev => ({ ...prev, refundMethod: e.target.value }))}
+                  className="styled-input"
+                >
+                  <option value="CASH">Cash Refund</option>
+                  <option value="STORE_CREDIT">Store Credit</option>
+                  <option value="MOBILE_MONEY">bKash / Nagad / Mobile Money</option>
+                  <option value="BANK">Bank Transfer</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase' }}>Items to Return</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '180px', overflowY: 'auto', background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  {newReturnForm.items.map((item, idx) => {
+                    const prod = products.find(p => p.productId === item.productId);
+                    return (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', paddingBottom: '8px', borderBottom: idx < newReturnForm.items.length - 1 ? '1px solid rgba(255,255,255,0.03)' : 'none' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {newReturnForm.cancellationType !== 'FULL_CANCELLATION' && (
+                            <input 
+                              type="checkbox" 
+                              checked={item.selected}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setNewReturnForm(prev => {
+                                  const updated = [...prev.items];
+                                  updated[idx] = { ...updated[idx], selected: checked };
+                                  return { ...prev, items: updated };
+                                });
+                              }}
+                              style={{ width: '16px', height: '16px', accentColor: 'hsl(var(--primary))' }}
+                            />
+                          )}
+                          <span style={{ color: '#fff', fontSize: '0.85rem', fontWeight: '700' }}>
+                            {prod ? prod.productName : `Prod #${item.productId}`}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '0.78rem', color: 'hsl(var(--text-muted))' }}>Qty:</span>
+                          <input 
+                            type="number"
+                            min="1"
+                            max={item.maxQty}
+                            disabled={!item.selected || newReturnForm.cancellationType === 'FULL_CANCELLATION'}
+                            value={item.qty}
+                            onChange={(e) => {
+                              const qtyVal = Math.min(item.maxQty, Math.max(1, Number(e.target.value)));
+                              setNewReturnForm(prev => {
+                                const updated = [...prev.items];
+                                updated[idx] = { ...updated[idx], qty: qtyVal };
+                                return { ...prev, items: updated };
+                              });
+                            }}
+                            className="styled-input"
+                            style={{ width: '70px', padding: '6px', textAlign: 'center' }}
+                          />
+                          <span style={{ fontSize: '0.78rem', color: 'hsl(var(--text-muted))' }}>/ {item.maxQty}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase' }}>Reason / Notes</label>
+                <textarea 
+                  value={newReturnForm.reason}
+                  onChange={(e) => setNewReturnForm(prev => ({ ...prev, reason: e.target.value }))}
+                  required
+                  placeholder="Reason for return, e.g. defective jeans zipper, size mismatch"
+                  className="styled-textarea"
+                  style={{ minHeight: '80px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setShowCreateReturnModal(false)} className="btn-secondary" style={{ padding: '10px 20px', fontSize: '0.875rem' }}>
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn-primary" 
+                  style={{ padding: '10px 20px', fontSize: '0.875rem', background: '#ea4335', color: '#fff', fontWeight: '800' }}
+                  disabled={newReturnForm.items.filter(i => i.selected).length === 0}
+                >
+                  Submit Request
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Return Modal */}
+      {showRejectReturnModal && selectedReturnForReject && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.82)', backdropFilter: 'blur(12px)',
+          zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s ease'
+        }}>
+          <div className="glass-card-premium" style={{ width: '90%', maxWidth: '460px', padding: '32px', border: '1px solid rgba(234, 67, 53, 0.3)' }}>
+            <h3 style={{ marginBottom: '16px', color: '#ea4335', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <X size={20} />
+              Reject Return Request #{selectedReturnForReject.returnRequestId}
+            </h3>
+            <form onSubmit={handleRejectReturn}>
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', marginBottom: '8px', fontWeight: '600' }}>
+                  Specify rejection reason (Required)
+                </label>
+                <textarea 
+                  required
+                  rows="4"
+                  value={rejectReturnReason}
+                  onChange={(e) => setRejectReturnReason(e.target.value)}
+                  placeholder="Provide audit feedback on why this request is rejected..."
+                  className="styled-textarea"
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => { setShowRejectReturnModal(false); setSelectedReturnForReject(null); }} className="btn-secondary" style={{ padding: '10px 20px', fontSize: '0.875rem' }}>
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn-primary"
+                  style={{ background: '#ea4335', color: '#fff', padding: '10px 20px', fontSize: '0.875rem', fontWeight: '850' }}
+                  disabled={!rejectReturnReason.trim()}
+                >
+                  Confirm Reject
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Promotion Modal */}
+      {showCreatePromoModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(4, 6, 10, 0.85)', backdropFilter: 'blur(12px)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', animation: 'scaleIn 0.3s ease' }}>
+          <div className="glass-card-premium" style={{ width: '90%', maxWidth: '680px', padding: '32px', maxHeight: '92vh', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Tag size={22} style={{ color: 'hsl(var(--primary))' }} />
+                Create New Promotion / Coupon
+              </h3>
+              <button onClick={() => setShowCreatePromoModal(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}><X size={20} /></button>
+            </div>
+
+            <form onSubmit={handleCreatePromotion} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Promo Code * <span style={{ color: 'hsl(var(--primary))' }}>(Auto-uppercased)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. SUMMER20"
+                    value={promoForm.promoCode}
+                    onChange={(e) => setPromoForm(prev => ({ ...prev, promoCode: e.target.value.toUpperCase() }))}
+                    className="styled-input"
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Campaign Name *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Eid Mega Sale 2026"
+                    value={promoForm.promoName}
+                    onChange={(e) => setPromoForm(prev => ({ ...prev, promoName: e.target.value }))}
+                    className="styled-input"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Discount Type *</label>
+                  <select
+                    value={promoForm.promoType}
+                    onChange={(e) => setPromoForm(prev => ({ ...prev, promoType: e.target.value }))}
+                    className="styled-input"
+                  >
+                    <option value="PERCENTAGE">Percentage (%)</option>
+                    <option value="FIXED">Fixed Amount (৳)</option>
+                    <option value="BOGO">Buy One Get One (BOGO)</option>
+                    <option value="TIERED">Tiered Discount</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Discount Value * {promoForm.promoType === 'PERCENTAGE' ? '(%)' : '(৳ Amount)'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder={promoForm.promoType === 'PERCENTAGE' ? 'e.g. 10' : 'e.g. 200'}
+                    value={promoForm.discountValue}
+                    onChange={(e) => setPromoForm(prev => ({ ...prev, discountValue: e.target.value }))}
+                    className="styled-input"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Min. Order Amount (৳)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="e.g. 500 (0 = no minimum)"
+                    value={promoForm.minOrderAmount}
+                    onChange={(e) => setPromoForm(prev => ({ ...prev, minOrderAmount: e.target.value }))}
+                    className="styled-input"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Min. Item Quantity</label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="e.g. 2"
+                    value={promoForm.minOrderQty}
+                    onChange={(e) => setPromoForm(prev => ({ ...prev, minOrderQty: e.target.value }))}
+                    className="styled-input"
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Start Date & Time *</label>
+                  <input
+                    type="datetime-local"
+                    value={promoForm.startDate}
+                    onChange={(e) => setPromoForm(prev => ({ ...prev, startDate: e.target.value }))}
+                    className="styled-input"
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Expiry Date & Time *</label>
+                  <input
+                    type="datetime-local"
+                    value={promoForm.endDate}
+                    onChange={(e) => setPromoForm(prev => ({ ...prev, endDate: e.target.value }))}
+                    className="styled-input"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Max Usage Limit (leave blank for unlimited)</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="e.g. 100"
+                  value={promoForm.maxUsageLimit}
+                  onChange={(e) => setPromoForm(prev => ({ ...prev, maxUsageLimit: e.target.value }))}
+                  className="styled-input"
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px' }}>
+                <button type="button" onClick={() => setShowCreatePromoModal(false)} className="btn-secondary" style={{ padding: '10px 24px', fontSize: '0.875rem' }}>Cancel</button>
+                <button type="submit" className="btn-primary" style={{ padding: '10px 24px', fontSize: '0.875rem', fontWeight: '800' }}>
+                  <PlusCircle size={14} /> Create Promotion
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create GRN Modal */}
+      {showCreateGrnModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.82)', backdropFilter: 'blur(12px)',
+          zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s ease'
+        }}>
+          <div className="glass-card-premium" style={{ width: '90%', maxWidth: '640px', padding: '32px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#fff', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Layers style={{ color: 'hsl(var(--primary))' }} size={22} />
+              Initialize Goods Received Note (GRN)
+            </h3>
+
+            <form onSubmit={handleCreateGrn}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase' }}>Supplier Email</label>
+                  <input 
+                    type="email"
+                    required
+                    list="supplier-emails-list"
+                    value={newGrnForm.supplierEmail}
+                    onChange={(e) => setNewGrnForm(prev => ({ ...prev, supplierEmail: e.target.value }))}
+                    placeholder="e.g. supplier@example.com"
+                    className="styled-input"
+                  />
+                  <datalist id="supplier-emails-list">
+                    {revenueSuppliers.map(s => <option key={s.supplierEmail} value={s.supplierEmail} />)}
+                  </datalist>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase' }}>Supplier Invoice #</label>
+                  <input 
+                    type="text"
+                    value={newGrnForm.invoiceNumber}
+                    onChange={(e) => setNewGrnForm(prev => ({ ...prev, invoiceNumber: e.target.value }))}
+                    placeholder="e.g. INV-1002"
+                    className="styled-input"
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase' }}>Inbound Logistics Notes</label>
+                <input 
+                  type="text"
+                  value={newGrnForm.notes}
+                  onChange={(e) => setNewGrnForm(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="e.g. Received via DHL Cargo shipment"
+                  className="styled-input"
+                />
+              </div>
+
+              <div style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '16px', background: 'rgba(255,255,255,0.01)', marginBottom: '20px' }}>
+                <h4 style={{ margin: '0 0 12px', fontSize: '0.9rem', color: '#fff', fontWeight: '700' }}>Add Shipment Items</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                  <select 
+                    id="grn-product-select" 
+                    className="styled-input" 
+                    style={{ fontSize: '0.85rem' }}
+                  >
+                    <option value="">Select Product...</option>
+                    {products.map(p => (
+                      <option key={p.productId} value={p.productId}>{p.productName} ({p.sku})</option>
+                    ))}
+                  </select>
+                  <input 
+                    type="text" 
+                    id="grn-batch-input" 
+                    placeholder="Batch Number (e.g. BATCH-01)" 
+                    className="styled-input" 
+                  />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                  <input 
+                    type="date" 
+                    id="grn-expiry-input" 
+                    placeholder="Expiry Date" 
+                    className="styled-input" 
+                  />
+                  <input 
+                    type="number" 
+                    id="grn-qty-input" 
+                    placeholder="Qty Received" 
+                    min="1" 
+                    className="styled-input" 
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prodSelect = document.getElementById('grn-product-select');
+                    const batchInput = document.getElementById('grn-batch-input');
+                    const expiryInput = document.getElementById('grn-expiry-input');
+                    const qtyInput = document.getElementById('grn-qty-input');
+
+                    const pId = Number(prodSelect.value);
+                    const batch = batchInput.value.trim();
+                    const expiry = expiryInput.value;
+                    const qty = Number(qtyInput.value);
+
+                    if (!pId || !batch || qty <= 0) {
+                      alert('Product, Batch Number, and positive Qty are required.');
+                      return;
+                    }
+
+                    const productObj = products.find(p => p.productId === pId);
+                    setNewGrnForm(prev => ({
+                      ...prev,
+                      items: [...prev.items, {
+                        productId: pId,
+                        productName: productObj?.productName || `Prod #${pId}`,
+                        batchNumber: batch,
+                        expiryDate: expiry || null,
+                        qtyReceived: qty
+                      }]
+                    }));
+
+                    // Reset item fields
+                    prodSelect.value = '';
+                    batchInput.value = '';
+                    expiryInput.value = '';
+                    qtyInput.value = '';
+                  }}
+                  className="btn-secondary"
+                  style={{ padding: '8px 16px', fontSize: '0.8rem', width: '100%' }}
+                >
+                  + Add Item to Manifest
+                </button>
+              </div>
+
+              {newGrnForm.items.length > 0 && (
+                <div className="premium-table-container" style={{ marginBottom: '24px', maxHeight: '150px', overflowY: 'auto' }}>
+                  <table className="premium-table" style={{ fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr>
+                        <th>Product</th>
+                        <th>Batch</th>
+                        <th>Expiry</th>
+                        <th>Qty</th>
+                        <th style={{ textAlign: 'right' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {newGrnForm.items.map((item, idx) => (
+                        <tr key={idx}>
+                          <td style={{ fontWeight: '700', color: '#fff' }}>{item.productName}</td>
+                          <td>{item.batchNumber}</td>
+                          <td>{item.expiryDate || 'No Expiry'}</td>
+                          <td>{item.qtyReceived}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewGrnForm(prev => ({
+                                  ...prev,
+                                  items: prev.items.filter((_, i) => i !== idx)
+                                }));
+                              }}
+                              style={{ border: 'none', background: 'none', color: '#ea4335', cursor: 'pointer', fontSize: '0.8rem' }}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setShowCreateGrnModal(false)} className="btn-secondary" style={{ padding: '10px 20px', fontSize: '0.875rem' }}>
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn-primary" 
+                  style={{ padding: '10px 20px', fontSize: '0.875rem', fontWeight: '800' }}
+                  disabled={newGrnForm.items.length === 0}
+                >
+                  Initialize GRN Note
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* QC GRN Modal */}
+      {showQcGrnModal && selectedGrnForQc && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.82)', backdropFilter: 'blur(12px)',
+          zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s ease'
+        }}>
+          <div className="glass-card-premium" style={{ width: '90%', maxWidth: '680px', padding: '32px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#fff', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Check style={{ color: 'hsl(var(--primary))' }} size={22} />
+              Quality Check: {selectedGrnForQc.grnNumber}
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: 'hsl(var(--text-muted))', marginBottom: '20px' }}>
+              Audit inbound items. Approved counts increment the physical MASTER ledger. Rejected items are logged.
+            </p>
+
+            <form onSubmit={handleSubmitGrnQc}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '320px', overflowY: 'auto', marginBottom: '24px', paddingRight: '4px' }}>
+                {qcFormItems.map((item, idx) => (
+                  <div key={idx} style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px', background: 'rgba(255,255,255,0.01)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontWeight: '800', color: '#fff', fontSize: '0.9rem' }}>{item.productName}</span>
+                      <span style={{ fontSize: '0.78rem', color: 'hsl(var(--text-muted))' }}>Batch: {item.batchNumber} (Inbound: {item.qtyReceived} units)</span>
+                    </div>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', marginBottom: '4px' }}>Qty Accepted</label>
+                        <input 
+                          type="number"
+                          min="0"
+                          max={item.qtyReceived}
+                          value={item.qtyAccepted}
+                          onChange={(e) => {
+                            const accepted = Math.min(item.qtyReceived, Math.max(0, Number(e.target.value)));
+                            const rejected = item.qtyReceived - accepted;
+                            setQcFormItems(prev => {
+                              const updated = [...prev];
+                              updated[idx] = { ...updated[idx], qtyAccepted: accepted, qtyRejected: rejected, qcStatus: accepted > 0 ? 'PASSED' : 'FAILED' };
+                              return updated;
+                            });
+                          }}
+                          className="styled-input"
+                          style={{ padding: '8px' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', marginBottom: '4px' }}>Qty Rejected</label>
+                        <input 
+                          type="number"
+                          min="0"
+                          max={item.qtyReceived}
+                          value={item.qtyRejected}
+                          onChange={(e) => {
+                            const rejected = Math.min(item.qtyReceived, Math.max(0, Number(e.target.value)));
+                            const accepted = item.qtyReceived - rejected;
+                            setQcFormItems(prev => {
+                              const updated = [...prev];
+                              updated[idx] = { ...updated[idx], qtyAccepted: accepted, qtyRejected: rejected, qcStatus: accepted > 0 ? 'PASSED' : 'FAILED' };
+                              return updated;
+                            });
+                          }}
+                          className="styled-input"
+                          style={{ padding: '8px' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', marginBottom: '4px' }}>QC Verdict</label>
+                        <select 
+                          value={item.qcStatus}
+                          onChange={(e) => {
+                            const status = e.target.value;
+                            setQcFormItems(prev => {
+                              const updated = [...prev];
+                              updated[idx] = { ...updated[idx], qcStatus: status };
+                              return updated;
+                            });
+                          }}
+                          className="styled-input"
+                          style={{ padding: '8px' }}
+                        >
+                          <option value="PASSED">Passed</option>
+                          <option value="FAILED">Failed</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.7rem', color: 'hsl(var(--text-secondary))', marginBottom: '4px' }}>QC Inspection Notes</label>
+                      <input 
+                        type="text"
+                        placeholder="e.g. Verified batch seals intact. No tears."
+                        value={item.qcNotes}
+                        onChange={(e) => {
+                          const notes = e.target.value;
+                          setQcFormItems(prev => {
+                            const updated = [...prev];
+                            updated[idx] = { ...updated[idx], qcNotes: notes };
+                            return updated;
+                          });
+                        }}
+                        className="styled-input"
+                        style={{ padding: '8px' }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => { setShowQcGrnModal(false); setSelectedGrnForQc(null); }} className="btn-secondary" style={{ padding: '10px 20px', fontSize: '0.875rem' }}>
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn-primary" 
+                  style={{ padding: '10px 20px', fontSize: '0.875rem', fontWeight: '800' }}
+                >
+                  Submit QC Verdict
                 </button>
               </div>
             </form>

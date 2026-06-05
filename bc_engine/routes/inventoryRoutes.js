@@ -16,4 +16,8 @@ router.get('/inventory/reconcile/:productId', requireAdmin, inventoryController.
 router.put('/products/:productId/images', requireRole(['SuperAdmin', 'Admin', 'Supplier']), inventoryController.updateProductImages);
 router.get('/catalog/fb-feed', inventoryController.getFacebookCatalogFeed);
 
+// Dynamic Pricing & AI Picks Queue
+router.get('/admin/ai-picks', requireAdmin, inventoryController.getAiDailyPicks);
+router.post('/admin/ai-picks/approve', requireAdmin, inventoryController.approveAiPricing);
+
 module.exports = router;

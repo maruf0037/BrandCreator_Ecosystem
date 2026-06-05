@@ -184,6 +184,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .sidebar {
   width: 280px;
+  flex-shrink: 0;
   border-right: 1px solid hsl(var(--border-color));
   background: hsl(var(--bg-card));
   padding: 30px 20px;
@@ -224,6 +225,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .main-content {
   flex: 1;
+  min-width: 0;
   padding: 40px;
   background: radial-gradient(circle at top right, hsl(var(--bg-card) / 0.5), transparent);
   overflow-y: auto;

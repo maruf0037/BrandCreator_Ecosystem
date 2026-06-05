@@ -900,3 +900,168 @@ exports.getFacebookCatalogFeed = async (req, res) => {
     res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
   }
 };
+
+// GET /api/admin/ai-picks
+exports.getAiDailyPicks = async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query(`
+      SELECT TOP 10 
+        p.ProductId AS productId,
+        p.ProductName AS productName,
+        p.SKU AS sku,
+        p.BasePrice AS basePrice,
+        p.RPU_MRP AS rpuMrp,
+        p.Category AS category,
+        COALESCE(SUM(oi.Qty), 0) AS salesVolume,
+        COALESCE(l.OnHandQty - l.ReservedQty, 0) AS availableStock,
+        COALESCE(ap.AdminSellingPrice, 0) AS currentPrice
+      FROM dbo.Products p
+      LEFT JOIN dbo.OrderItems oi ON p.ProductId = oi.ProductId
+      LEFT JOIN dbo.InventoryLedgers l ON p.ProductId = l.ProductId AND l.LedgerType = 'MASTER'
+      LEFT JOIN dbo.AdminPricingPlans ap ON p.ProductId = ap.ProductId AND ap.Status = 'ACTIVE'
+      WHERE p.Status = 'ACTIVE' AND p.QCStatus = 'APPROVED'
+      GROUP BY p.ProductId, p.ProductName, p.SKU, p.BasePrice, p.RPU_MRP, p.Category, l.OnHandQty, l.ReservedQty, ap.AdminSellingPrice
+      ORDER BY salesVolume DESC, availableStock DESC
+    `);
+
+    const items = result.recordset.map(product => {
+      const supplierCost = (product.rpuMrp !== null && parseFloat(product.rpuMrp) > 0)
+        ? parseFloat(product.rpuMrp)
+        : (product.basePrice !== null ? parseFloat(product.basePrice) : 0);
+
+      const platformCost = 150;
+      const riskBuffer = Math.round(supplierCost * 0.1) + 30;
+      const recommendedPrice = supplierCost + platformCost + riskBuffer;
+
+      return {
+        productId: product.productId,
+        productName: product.productName,
+        sku: product.sku,
+        category: product.category,
+        salesVolume: product.salesVolume,
+        availableStock: product.availableStock,
+        currentPrice: parseFloat(product.currentPrice),
+        supplierCost,
+        platformCost,
+        riskBuffer,
+        recommendedPrice
+      };
+    });
+
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};
+
+// POST /api/admin/ai-picks/approve
+exports.approveAiPricing = async (req, res) => {
+  const { productId, approvedPrice } = req.body;
+  const email = req.user?.email || 'admin@brandcreator.com';
+
+  if (!productId || approvedPrice === undefined || isNaN(parseFloat(approvedPrice))) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'productId and approvedPrice are required' });
+  }
+
+  try {
+    const pool = await poolPromise;
+    const price = parseFloat(approvedPrice);
+
+    // Fetch Product info
+    const productRes = await pool.request()
+      .input('productId', sql.Int, productId)
+      .query('SELECT ProductId, BasePrice, RPU_MRP FROM dbo.Products WHERE ProductId = @productId');
+
+    if (productRes.recordset.length === 0) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Product not found' });
+    }
+
+    const product = productRes.recordset[0];
+    const supplierCost = product.RPU_MRP !== null && parseFloat(product.RPU_MRP) > 0 
+      ? parseFloat(product.RPU_MRP) 
+      : (product.BasePrice !== null ? parseFloat(product.BasePrice) : 0.00);
+
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      // 1. Deactivate previous plans for this product
+      await transaction.request()
+        .input('productId', sql.Int, productId)
+        .query("UPDATE dbo.AdminPricingPlans SET Status = 'INACTIVE', UpdatedAt = SYSUTCDATETIME() WHERE ProductId = @productId AND Status = 'ACTIVE'");
+
+      // 2. Insert new active Admin Pricing Plan
+      await transaction.request()
+        .input('productId', sql.Int, productId)
+        .input('price', sql.Decimal(18, 2), price)
+        .input('adminEmail', sql.NVarChar(255), email)
+        .query(`
+          INSERT INTO dbo.AdminPricingPlans (
+            ProductId, AdminSellingPrice, AdBudgetPlanned, PlatformCommission, 
+            DeliveryOpsCost, DiscountAmount, CreatedByAdmin, Status
+          )
+          VALUES (
+            @productId, @price, 50.00, 15.00, 60.00, 0.00, @adminEmail, 'ACTIVE'
+          )
+        `);
+
+      // 3. Update Snapshot
+      const netProfit = price - supplierCost - 50.00 - 60.00 - 0.00;
+      const statusVal = netProfit <= 0 ? 'WARNING' : 'OK';
+
+      const snapshotCheck = await transaction.request()
+        .input('productId', sql.Int, productId)
+        .query('SELECT SnapshotId FROM dbo.ProductProfitSnapshots WHERE ProductId = @productId');
+
+      if (snapshotCheck.recordset.length > 0) {
+        await transaction.request()
+          .input('productId', sql.Int, productId)
+          .input('supplierCost', sql.Decimal(18, 2), supplierCost)
+          .input('price', sql.Decimal(18, 2), price)
+          .input('netProfit', sql.Decimal(18, 2), netProfit)
+          .input('status', sql.NVarChar(50), statusVal)
+          .query(`
+            UPDATE dbo.ProductProfitSnapshots
+            SET SupplierRpuMrp = @supplierCost,
+                AdminSellingPrice = @price,
+                AdBudgetPlanned = 50.00,
+                NetBrandCreatorProfit = @netProfit,
+                Status = @status,
+                UpdatedAt = SYSUTCDATETIME()
+            WHERE ProductId = @productId
+          `);
+      } else {
+        await transaction.request()
+          .input('productId', sql.Int, productId)
+          .input('supplierCost', sql.Decimal(18, 2), supplierCost)
+          .input('price', sql.Decimal(18, 2), price)
+          .input('netProfit', sql.Decimal(18, 2), netProfit)
+          .input('status', sql.NVarChar(50), statusVal)
+          .query(`
+            INSERT INTO dbo.ProductProfitSnapshots (
+              ProductId, SupplierRpuMrp, AdminSellingPrice, AdBudgetPlanned, 
+              AdSpendActual, NetBrandCreatorProfit, Status
+            )
+            VALUES (
+              @productId, @supplierCost, @price, 50.00, 
+              0.00, @netProfit, @status
+            )
+          `);
+      }
+
+      // 4. Update Product status
+      await transaction.request()
+        .input('productId', sql.Int, productId)
+        .query("UPDATE dbo.Products SET ProductReadinessStatus = 'CAMPAIGN_READY' WHERE ProductId = @productId");
+
+      await transaction.commit();
+      res.json({ success: true });
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+};

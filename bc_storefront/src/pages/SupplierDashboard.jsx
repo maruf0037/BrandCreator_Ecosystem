@@ -7,11 +7,11 @@ import {
   AlertCircle, History, Upload, Image as ImageIcon, ArrowLeft, ArrowRight, Star, Trash2,
   Layers, AlertTriangle
 } from 'lucide-react';
-import { api } from '../services/api';
+import { api, getBackendUrl } from '../services/api';
 import { commissionApi } from '../services/commissionApi';
 
 export default function SupplierDashboard({ currentUser }) {
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+  const backendUrl = getBackendUrl();
 
   // States
   const [activeTab, setActiveTab] = useState('inventory');

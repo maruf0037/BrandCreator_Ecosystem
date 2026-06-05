@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import AdminDashboard from './pages/AdminDashboard';
 import SupplierDashboard from './pages/SupplierDashboard';
 import Shop from './pages/Shop';
+import PosTerminal from './pages/PosTerminal';
 import SupplierOnboarding from './pages/SupplierOnboarding';
 import ProfileCompletion from './pages/ProfileCompletion';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -58,7 +59,7 @@ export default function App() {
         <Route 
           path="/admin" 
           element={
-            <ProtectedRoute allowedRoles={['SuperAdmin', 'Admin']}>
+            <ProtectedRoute allowedRoles={['SuperAdmin', 'Admin', 'Supplier']}>
               <AdminDashboard />
             </ProtectedRoute>
           } 
@@ -80,6 +81,16 @@ export default function App() {
           element={
             <ProtectedRoute allowedRoles={['Customer', 'Supplier', 'Admin', 'SuperAdmin']}>
               <Shop />
+            </ProtectedRoute>
+          } 
+        />
+
+        {/* High-Performance Cashier POS Terminal */}
+        <Route 
+          path="/pos" 
+          element={
+            <ProtectedRoute allowedRoles={['SuperAdmin', 'Admin', 'Supplier']}>
+              <PosTerminal />
             </ProtectedRoute>
           } 
         />

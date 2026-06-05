@@ -10,7 +10,7 @@ const logger = require('../src/logger');
 exports.requestReturn = async (req, res) => {
   try {
     const { orderRef } = req.params;
-    const { items, reason } = req.body;
+    const { items, reason, refundMethod, cancellationType } = req.body;
     const customerEmail = req.user?.email;
     const userRole = req.user?.role || 'Customer';
 
@@ -19,7 +19,7 @@ exports.requestReturn = async (req, res) => {
     }
 
     const pool = await poolPromise;
-    const result = await returnService.requestReturn(pool, orderRef, customerEmail, items, reason, userRole);
+    const result = await returnService.requestReturn(pool, orderRef, customerEmail, items, reason, userRole, refundMethod, cancellationType);
 
     return res.status(201).json({
       success: true,
@@ -83,6 +83,7 @@ exports.getAdminReturns = async (req, res) => {
 exports.approveReturn = async (req, res) => {
   try {
     const { id } = req.params;
+    const { targetLedger } = req.body;
     const adminEmail = req.user?.email;
 
     if (!adminEmail) {
@@ -90,7 +91,7 @@ exports.approveReturn = async (req, res) => {
     }
 
     const pool = await poolPromise;
-    const result = await returnService.approveReturn(pool, parseInt(id, 10), adminEmail);
+    const result = await returnService.approveReturn(pool, parseInt(id, 10), adminEmail, targetLedger);
 
     return res.json({
       success: true,

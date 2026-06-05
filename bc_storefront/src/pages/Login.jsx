@@ -2,12 +2,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Sparkles, Database, CloudLightning, RefreshCw } from 'lucide-react';
+import { getBackendUrl } from '../services/api';
 
 export default function Login() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+  const backendUrl = getBackendUrl();
 
   const handleGoogleLogin = (role) => {
     // Direct link to Express server authorization route with role query parameter

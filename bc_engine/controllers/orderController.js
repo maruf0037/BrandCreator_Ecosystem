@@ -4,6 +4,135 @@ const logger = require('../src/logger');
 const { outboxPendingGauge, webhookVerifyCounter } = require('../src/metrics');
 const { resolveCommissionRate } = require('./commissionController');
 
+// FEFO batch depletion helper
+const depleteBatchesFEFO = async (transaction, productId, qtyNeeded) => {
+  let remaining = qtyNeeded;
+  const batchesRes = await transaction.request()
+    .input('productId', sql.Int, productId)
+    .query(`
+      SELECT BatchId, Qty 
+      FROM dbo.SupplierStockBatches 
+      WHERE ProductId = @productId AND Qty > 0
+      ORDER BY 
+        CASE WHEN ExpiryDate IS NULL THEN 1 ELSE 0 END, 
+        ExpiryDate ASC, 
+        BatchId ASC
+    `);
+
+  for (const batch of batchesRes.recordset) {
+    if (remaining <= 0) break;
+    const deduct = Math.min(remaining, batch.Qty);
+
+    await transaction.request()
+      .input('batchId', sql.Int, batch.BatchId)
+      .input('deduct', sql.Int, deduct)
+      .query('UPDATE dbo.SupplierStockBatches SET Qty = Qty - @deduct WHERE BatchId = @batchId');
+
+    remaining -= deduct;
+  }
+
+  if (remaining > 0) {
+    logger.warn(`FEFO depletion warning: Product ${productId} needed ${qtyNeeded} but only depleted ${qtyNeeded - remaining} from batches.`);
+  }
+};
+
+// Promotion code validation helper
+const validateAndApplyPromo = async (transaction, promoCode, items, customerEmail, grossTotal, totalQty) => {
+  if (!promoCode) return { discountAmount: 0, promoCodeApplied: null, promoId: null };
+
+  const promoRes = await transaction.request()
+    .input('promoCode', sql.NVarChar(50), promoCode.toUpperCase().trim())
+    .query('SELECT * FROM dbo.Promotions WHERE PromoCode = @promoCode');
+
+  const promo = promoRes.recordset[0];
+  if (!promo) {
+    throw Object.assign(new Error('Coupon code does not exist.'), { code: 'PROMO_NOT_FOUND' });
+  }
+
+  if (!promo.IsActive) {
+    throw Object.assign(new Error('Coupon code is inactive.'), { code: 'PROMO_INACTIVE' });
+  }
+
+  const now = new Date();
+  if (now < new Date(promo.StartDate) || now > new Date(promo.EndDate)) {
+    throw Object.assign(new Error('Coupon code has expired or is not yet active.'), { code: 'PROMO_EXPIRED' });
+  }
+
+  if (promo.MaxUsageLimit !== null && promo.UsageCount >= promo.MaxUsageLimit) {
+    throw Object.assign(new Error('Coupon code usage limit exceeded.'), { code: 'USAGE_LIMIT_EXCEEDED' });
+  }
+
+  if (grossTotal < parseFloat(promo.MinOrderAmount)) {
+    throw Object.assign(
+      new Error(`Minimum order amount of BDT ${parseFloat(promo.MinOrderAmount).toFixed(2)} is required for this coupon.`),
+      { code: 'MIN_AMOUNT_NOT_MET' }
+    );
+  }
+
+  if (totalQty < promo.MinOrderQty) {
+    throw Object.assign(
+      new Error(`Minimum of ${promo.MinOrderQty} items are required for this coupon.`),
+      { code: 'MIN_QTY_NOT_MET' }
+    );
+  }
+
+  // Check specific product applicability if promotion is scoped
+  const scopeRes = await transaction.request()
+    .input('promoId', sql.BigInt, promo.PromoId)
+    .query('SELECT ProductId FROM dbo.PromotionProducts WHERE PromoId = @promoId');
+
+  const scopedProducts = scopeRes.recordset.map(r => r.ProductId);
+  let applicableTotal = grossTotal;
+
+  if (scopedProducts.length > 0) {
+    applicableTotal = 0;
+    let hasEligibleItem = false;
+    for (const item of items) {
+      if (scopedProducts.includes(item.productId)) {
+        applicableTotal += item.qty * item.unitPrice;
+        hasEligibleItem = true;
+      }
+    }
+
+    if (!hasEligibleItem) {
+      throw Object.assign(
+        new Error('None of the items in your cart are eligible for this coupon.'),
+        { code: 'NO_ELIGIBLE_ITEMS' }
+      );
+    }
+  }
+
+  // Calculate discount
+  let discount = 0;
+  const promoType = promo.PromoType.toUpperCase();
+  const discountVal = parseFloat(promo.DiscountValue);
+
+  if (promoType === 'PERCENTAGE') {
+    discount = (applicableTotal * discountVal) / 100.0;
+  } else if (promoType === 'FIXED') {
+    discount = Math.min(discountVal, applicableTotal);
+  } else if (promoType === 'BOGO') {
+    if (items.length >= 2) {
+      let cheapest = Infinity;
+      for (const item of items) {
+        if (scopedProducts.length === 0 || scopedProducts.includes(item.productId)) {
+          if (item.unitPrice < cheapest) {
+            cheapest = item.unitPrice;
+          }
+        }
+      }
+      discount = cheapest !== Infinity ? cheapest : 0;
+    }
+  }
+
+  const discountAmount = parseFloat(discount.toFixed(2));
+  return {
+    discountAmount,
+    promoCodeApplied: promo.PromoCode,
+    promoId: promo.PromoId
+  };
+};
+
 // Helper function to record order item splits in OrderProfitBreakdowns and update profit snapshots
 const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
   const orderChannelRes = await transaction.request()
@@ -145,7 +274,7 @@ const recordOrderProfitBreakdown = async (transaction, orderId, orderRef) => {
 
 // POST /api/orders
 exports.createOrder = async (req, res) => {
-  const { orderRef, items, currency, customerPhone, saleChannel, utmSource } = req.body;
+  const { orderRef, items, currency, customerPhone, saleChannel, utmSource, promoCode } = req.body;
   const customerEmail = req.user?.email || 'customer@test.com';
   const activeSaleChannel = saleChannel || 'ONLINE';
 
@@ -164,13 +293,22 @@ exports.createOrder = async (req, res) => {
 
     try {
       // 1. Calculate Total Amount and verify products
-      let totalAmount = 0;
+      let grossTotal = 0;
+      let totalQty = 0;
       for (const item of items) {
         if (!item.productId || !item.qty || !item.unitPrice) {
           return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Each item must have productId, qty, and unitPrice' });
         }
-        totalAmount += item.qty * item.unitPrice;
+        grossTotal += item.qty * item.unitPrice;
+        totalQty += item.qty;
       }
+
+      // Validate and apply coupon / promo code if provided
+      const { discountAmount, promoCodeApplied, promoId } = await validateAndApplyPromo(
+        transaction, promoCode, items, customerEmail, grossTotal, totalQty
+      );
+
+      const totalAmount = parseFloat(Math.max(0, grossTotal - discountAmount).toFixed(2));
 
       // Resolve ledgerType based on sale channel
       const ledgerType = (activeSaleChannel === 'PHYSICAL_SHOP') ? 'MASTER' : 'SELL';
@@ -206,19 +344,38 @@ exports.createOrder = async (req, res) => {
         .input('paymentProvider', sql.NVarChar(50), paymentProvider)
         .input('transactionId', sql.NVarChar(100), transactionId)
         .input('utmSource', sql.NVarChar(150), utmSource || null)
+        .input('promoCodeApplied', sql.NVarChar(50), promoCodeApplied)
+        .input('discountAmount', sql.Decimal(18, 2), discountAmount)
         .query(isPhysical ? `
-          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, PaymentStatus, TotalAmount, PaidAmount, PaidAt, Currency, CustomerPhone, SaleChannel, PaymentProvider, TransactionId, UtmSource)
+          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, PaymentStatus, TotalAmount, PaidAmount, PaidAt, Currency, CustomerPhone, SaleChannel, PaymentProvider, TransactionId, UtmSource, PromoCodeApplied, DiscountAmount)
           OUTPUT inserted.OrderId
-          VALUES (@orderRef, @customerEmail, 'CONFIRMED', 'PAYMENT_VERIFIED', @totalAmount, @totalAmount, SYSUTCDATETIME(), @currency, @customerPhone, @saleChannel, @paymentProvider, @transactionId, @utmSource)
+          VALUES (@orderRef, @customerEmail, 'CONFIRMED', 'PAYMENT_VERIFIED', @totalAmount, @totalAmount, SYSUTCDATETIME(), @currency, @customerPhone, @saleChannel, @paymentProvider, @transactionId, @utmSource, @promoCodeApplied, @discountAmount)
         ` : `
-          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency, CustomerPhone, SaleChannel, UtmSource)
+          INSERT INTO dbo.Orders (OrderRef, CustomerEmail, Status, TotalAmount, Currency, CustomerPhone, SaleChannel, UtmSource, PromoCodeApplied, DiscountAmount)
           OUTPUT inserted.OrderId
-          VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency, @customerPhone, @saleChannel, @utmSource)
+          VALUES (@orderRef, @customerEmail, 'PENDING', @totalAmount, @currency, @customerPhone, @saleChannel, @utmSource, @promoCodeApplied, @discountAmount)
         `);
 
       const orderId = orderInsertRes.recordset[0].OrderId;
 
-      // 4. Process items: insert to OrderItems and reserve/commit MASTER/SELL stock via sp_InventoryApplyTransaction
+      // 4. Update promotion limits and usage logs if a valid coupon was applied
+      if (promoId) {
+        await transaction.request()
+          .input('promoId', sql.BigInt, promoId)
+          .query('UPDATE dbo.Promotions SET UsageCount = UsageCount + 1 WHERE PromoId = @promoId');
+
+        await transaction.request()
+          .input('promoId', sql.BigInt, promoId)
+          .input('orderId', sql.BigInt, orderId)
+          .input('customerEmail', sql.NVarChar(255), customerEmail)
+          .input('discountApplied', sql.Decimal(18, 2), discountAmount)
+          .query(`
+            INSERT INTO dbo.PromotionUsageHistory (PromoId, OrderId, CustomerEmail, DiscountApplied)
+            VALUES (@promoId, @orderId, @customerEmail, @discountApplied)
+          `);
+      }
+
+      // 5. Process items: insert to OrderItems and reserve/commit MASTER/SELL stock via sp_InventoryApplyTransaction
       for (const item of items) {
         // A. Insert Item record
         await transaction.request()
@@ -232,16 +389,24 @@ exports.createOrder = async (req, res) => {
           `);
 
         // B. Apply RESERVE or OUT
-        await transaction.request()
-          .input('ProductId', sql.Int, item.productId)
-          .input('LedgerType', sql.NVarChar(20), ledgerType)
-          .input('TxnType', sql.NVarChar(30), isPhysical ? 'OUT' : 'RESERVE')
-          .input('Qty', sql.Int, item.qty)
-          .input('RefType', sql.NVarChar(50), isPhysical ? 'ORDER_COMMIT' : 'ORDER_RESERVE')
-          .input('RefId', sql.NVarChar(100), orderRef)
-          .input('Note', sql.NVarChar(255), isPhysical ? 'Commit order stock directly' : 'Reserve order stock')
-          .input('CreatedByEmail', sql.NVarChar(255), customerEmail)
-          .execute('dbo.sp_InventoryApplyTransaction');
+        // B. Apply RESERVE or OUT to both ledgers for real-time sync
+        for (const lType of ['MASTER', 'SELL']) {
+          await transaction.request()
+            .input('ProductId', sql.Int, item.productId)
+            .input('LedgerType', sql.NVarChar(20), lType)
+            .input('TxnType', sql.NVarChar(30), isPhysical ? 'OUT' : 'RESERVE')
+            .input('Qty', sql.Int, item.qty)
+            .input('RefType', sql.NVarChar(50), isPhysical ? 'ORDER_COMMIT' : 'ORDER_RESERVE')
+            .input('RefId', sql.NVarChar(100), orderRef)
+            .input('Note', sql.NVarChar(255), isPhysical ? 'Commit order stock directly' : 'Reserve order stock')
+            .input('CreatedByEmail', sql.NVarChar(255), customerEmail)
+            .execute('dbo.sp_InventoryApplyTransaction');
+        }
+
+        // FEFO Stock Batch depletion for physical POS orders
+        if (isPhysical) {
+          await depleteBatchesFEFO(transaction, item.productId, item.qty);
+        }
       }
 
       await transaction.commit();
@@ -467,16 +632,20 @@ exports.confirmOrder = async (req, res) => {
 
       // 3. For each item, apply COMMIT transaction
       for (const item of itemsRes.recordset) {
-        await transaction.request()
-          .input('ProductId', sql.Int, item.ProductId)
-          .input('LedgerType', sql.NVarChar(20), ledgerType)
-          .input('TxnType', sql.NVarChar(30), 'COMMIT')
-          .input('Qty', sql.Int, item.Qty)
-          .input('RefType', sql.NVarChar(50), 'ORDER_COMMIT')
-          .input('RefId', sql.NVarChar(100), orderRef)
-          .input('Note', sql.NVarChar(255), 'Commit order stock')
-          .input('CreatedByEmail', sql.NVarChar(255), email)
-          .execute('dbo.sp_InventoryApplyTransaction');
+        for (const lType of ['MASTER', 'SELL']) {
+          await transaction.request()
+            .input('ProductId', sql.Int, item.ProductId)
+            .input('LedgerType', sql.NVarChar(20), lType)
+            .input('TxnType', sql.NVarChar(30), 'COMMIT')
+            .input('Qty', sql.Int, item.Qty)
+            .input('RefType', sql.NVarChar(50), 'ORDER_COMMIT')
+            .input('RefId', sql.NVarChar(100), orderRef)
+            .input('Note', sql.NVarChar(255), 'Commit order stock')
+            .input('CreatedByEmail', sql.NVarChar(255), email)
+            .execute('dbo.sp_InventoryApplyTransaction');
+        }
+
+        await depleteBatchesFEFO(transaction, item.ProductId, item.Qty);
       }
 
       // 4. Update Order Status
@@ -606,16 +775,18 @@ exports.cancelOrder = async (req, res) => {
 
       // For each item, apply RELEASE transaction
       for (const item of itemsRes.recordset) {
-        await transaction.request()
-          .input('ProductId', sql.Int, item.ProductId)
-          .input('LedgerType', sql.NVarChar(20), ledgerType)
-          .input('TxnType', sql.NVarChar(30), 'RELEASE')
-          .input('Qty', sql.Int, item.Qty)
-          .input('RefType', sql.NVarChar(50), 'ORDER_RELEASE')
-          .input('RefId', sql.NVarChar(100), orderRef)
-          .input('Note', sql.NVarChar(255), 'Release order stock')
-          .input('CreatedByEmail', sql.NVarChar(255), email)
-          .execute('dbo.sp_InventoryApplyTransaction');
+        for (const lType of ['MASTER', 'SELL']) {
+          await transaction.request()
+            .input('ProductId', sql.Int, item.ProductId)
+            .input('LedgerType', sql.NVarChar(20), lType)
+            .input('TxnType', sql.NVarChar(30), 'RELEASE')
+            .input('Qty', sql.Int, item.Qty)
+            .input('RefType', sql.NVarChar(50), 'ORDER_RELEASE')
+            .input('RefId', sql.NVarChar(100), orderRef)
+            .input('Note', sql.NVarChar(255), 'Release order stock')
+            .input('CreatedByEmail', sql.NVarChar(255), email)
+            .execute('dbo.sp_InventoryApplyTransaction');
+        }
       }
 
       // Update Order Status
@@ -919,6 +1090,8 @@ exports.paymentWebhook = async (req, res) => {
               .input('Note', sql.NVarChar(255), 'Commit order stock via Webhook')
               .input('CreatedByEmail', sql.NVarChar(255), email)
               .execute('dbo.sp_InventoryApplyTransaction');
+
+            await depleteBatchesFEFO(transaction, item.ProductId, item.Qty);
           }
 
            // Update Status and Payment Details

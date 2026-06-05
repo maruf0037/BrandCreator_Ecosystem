@@ -6,7 +6,7 @@ import {
   ShoppingCart, Trash2, Check, X, AlertCircle, ShoppingCartIcon,
   Clock, ShieldCheck, Tag, ChevronLeft, ChevronRight
 } from 'lucide-react';
-import { api } from '../services/api';
+import { api, getBackendUrl } from '../services/api';
 
 const shopStyles = `
   @keyframes pulse {
@@ -198,7 +198,7 @@ function ProductImageCarousel({ product, backendUrl, displayName }) {
 }
 
 export default function Shop({ currentUser }) {
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+  const backendUrl = getBackendUrl();
 
   // States
   const [products, setProducts] = useState([]);
@@ -213,6 +213,18 @@ export default function Shop({ currentUser }) {
   const [checkingOut, setCheckingOut] = useState(false);
   const [lastPlacedOrder, setLastPlacedOrder] = useState(null);
   const [customerPhone, setCustomerPhone] = useState('');
+
+  // Promo states
+  const [promoCode, setPromoCode] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState(null);
+  const [promoError, setPromoError] = useState(null);
+  const [validatingPromo, setValidatingPromo] = useState(false);
+
+  useEffect(() => {
+    setAppliedPromo(null);
+    setPromoCode('');
+    setPromoError(null);
+  }, [cart]);
 
   // Tab View for Customer
   const [viewTab, setViewTab] = useState('shop'); // 'shop' or 'orders'
@@ -325,6 +337,36 @@ export default function Shop({ currentUser }) {
     return cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
   };
 
+  // Apply Coupon / Promo Code
+  const handleApplyPromo = async () => {
+    if (!promoCode || promoCode.trim() === '') return;
+    setPromoError(null);
+    setValidatingPromo(true);
+    try {
+      const itemsPayload = cart.map(item => ({
+        productId: item.productId,
+        qty: item.qty,
+        unitPrice: item.price
+      }));
+      
+      const res = await api.post('/api/promotions/validate', {
+        promoCode: promoCode.trim(),
+        items: itemsPayload
+      });
+      
+      if (res.valid) {
+        setAppliedPromo(res);
+        showToast(`Coupon ${promoCode.trim().toUpperCase()} applied successfully!`);
+      } else {
+        setPromoError(res.message || 'Invalid coupon code');
+      }
+    } catch (err) {
+      setPromoError(err.message || 'Invalid coupon code');
+    } finally {
+      setValidatingPromo(false);
+    }
+  };
+
   // Checkout / Reserve Order
   const handleCheckout = async () => {
     if (cart.length === 0) return;
@@ -351,7 +393,8 @@ export default function Shop({ currentUser }) {
         currency: 'BDT',
         customerPhone: customerPhone.trim(),
         saleChannel: 'ONLINE',
-        utmSource
+        utmSource,
+        promoCode: appliedPromo ? appliedPromo.promoCode : null
       });
 
       setCustomerPhone('');
@@ -359,7 +402,8 @@ export default function Shop({ currentUser }) {
       // Populate Checkout success details
       setLastPlacedOrder({
         orderRef,
-        totalAmount: getCartTotal(),
+        totalAmount: appliedPromo ? appliedPromo.netTotal : getCartTotal(),
+        discountAmount: appliedPromo ? appliedPromo.discountAmount : 0,
         itemsCount: cart.reduce((sum, i) => sum + i.qty, 0),
         items: [...cart]
       });
@@ -914,9 +958,76 @@ export default function Shop({ currentUser }) {
 
             {cart.length > 0 && (
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '24px', marginTop: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-                  <span style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem' }}>Estimated Subtotal:</span>
-                  <strong style={{ fontSize: '1.35rem', color: '#fff', fontWeight: '700' }}>৳{getCartTotal().toLocaleString()}</strong>
+                {/* Coupon input block */}
+                <div style={{ marginBottom: '20px', background: 'rgba(255, 255, 255, 0.01)', border: '1px solid rgba(255,255,255,0.04)', padding: '16px', borderRadius: '10px' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', marginBottom: '6px', fontWeight: '600' }}>
+                    Have a promo code?
+                  </label>
+                  {!appliedPromo ? (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        placeholder="ENTER CODE"
+                        value={promoCode}
+                        onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          background: 'rgba(255,255,255,0.02)',
+                          color: '#fff',
+                          fontSize: '0.85rem',
+                          outline: 'none',
+                          textTransform: 'uppercase'
+                        }}
+                      />
+                      <button 
+                        onClick={handleApplyPromo}
+                        disabled={validatingPromo || !promoCode}
+                        className="btn-secondary"
+                        style={{ padding: '8px 14px', fontSize: '0.8rem', borderRadius: '6px' }}
+                      >
+                        {validatingPromo ? 'Validating...' : 'Apply'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(52, 168, 83, 0.06)', border: '1px solid rgba(52,168,83,0.2)', padding: '8px 12px', borderRadius: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#34a853', fontSize: '0.85rem', fontWeight: '700' }}>
+                        <Tag size={12} /> {appliedPromo.promoCode} Applied!
+                      </div>
+                      <button 
+                        onClick={() => { setAppliedPromo(null); setPromoCode(''); }}
+                        style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', padding: '2px' }}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
+                  {promoError && (
+                    <div style={{ color: '#ea4335', fontSize: '0.78rem', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <AlertCircle size={10} /> {promoError}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: 'hsl(var(--text-secondary))' }}>
+                    <span>Subtotal:</span>
+                    <span>৳{getCartTotal().toLocaleString()}</span>
+                  </div>
+                  {appliedPromo && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#34a853' }}>
+                      <span>Discount ({appliedPromo.promoCode}):</span>
+                      <span>৳ -{appliedPromo.discountAmount.toLocaleString()}</span>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px', marginTop: '4px' }}>
+                    <span style={{ color: '#fff', fontSize: '0.95rem', fontWeight: '600' }}>Net Total:</span>
+                    <strong style={{ fontSize: '1.35rem', color: '#fff', fontWeight: '700' }}>
+                      ৳{(appliedPromo ? appliedPromo.netTotal : getCartTotal()).toLocaleString()}
+                    </strong>
+                  </div>
                 </div>
 
                 {/* WhatsApp Phone Number Input */}

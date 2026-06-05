@@ -151,7 +151,7 @@ async function validateReturnItems(pool, orderId, items) {
  * Customer requests a return on a confirmed order.
  * Items: [{ productId, qty }]
  */
-async function requestReturn(pool, orderRef, customerEmail, items, reason, userRole = 'Customer') {
+async function requestReturn(pool, orderRef, customerEmail, items, reason, userRole = 'Customer', refundMethod = 'STORE_CREDIT', cancellationType = 'PARTIAL_RETURN') {
   // 1. Validate order
   const order = await validateOrderForReturn(pool, orderRef, customerEmail, userRole);
 
@@ -166,16 +166,26 @@ async function requestReturn(pool, orderRef, customerEmail, items, reason, userR
   await transaction.begin();
 
   try {
+    const auditLog = [{
+      action: 'REQUESTED',
+      timestamp: new Date().toISOString(),
+      user: customerEmail,
+      notes: reason || 'Return requested'
+    }];
+
     const insertReq = await transaction.request()
       .input('orderId', sql.BigInt, order.OrderId)
       .input('customerEmail', sql.NVarChar(255), customerEmail)
       .input('refundTotal', sql.Decimal(18, 2), refundTotal)
       .input('reason', sql.NVarChar(1000), reason || null)
       .input('requestedByEmail', sql.NVarChar(255), customerEmail)
+      .input('refundMethod', sql.NVarChar(30), refundMethod || 'STORE_CREDIT')
+      .input('cancellationType', sql.NVarChar(30), cancellationType || 'PARTIAL_RETURN')
+      .input('auditLogJson', sql.NVarChar(sql.MAX), JSON.stringify(auditLog))
       .query(`
-        INSERT INTO dbo.ReturnRequests (OrderId, CustomerEmail, RefundTotal, Reason, RequestedByEmail)
+        INSERT INTO dbo.ReturnRequests (OrderId, CustomerEmail, RefundTotal, Reason, RequestedByEmail, RefundMethod, CancellationType, AuditLogJson)
         OUTPUT INSERTED.*
-        VALUES (@orderId, @customerEmail, @refundTotal, @reason, @requestedByEmail)
+        VALUES (@orderId, @customerEmail, @refundTotal, @reason, @requestedByEmail, @refundMethod, @cancellationType, @auditLogJson)
       `);
 
     const returnRequest = insertReq.recordset[0];
@@ -201,6 +211,9 @@ async function requestReturn(pool, orderRef, customerEmail, items, reason, userR
       status: returnRequest.Status,
       refundTotal,
       reason: reason || null,
+      refundMethod: returnRequest.RefundMethod,
+      cancellationType: returnRequest.CancellationType,
+      auditLog: auditLog,
       items: enriched.map(i => ({
         productId: i.productId,
         productName: i.productName,
@@ -224,6 +237,7 @@ async function getReturnRequests(pool, filters = {}) {
       rr.ReturnRequestId, rr.OrderId, rr.CustomerEmail, rr.Status,
       rr.RefundTotal, rr.Reason, rr.RequestedByEmail, rr.ApprovedByEmail,
       rr.RejectReason, rr.RefundedAt, rr.CreatedAt, rr.UpdatedAt,
+      rr.RefundMethod, rr.CancellationType, rr.AuditLogJson,
       o.OrderRef
     FROM dbo.ReturnRequests rr
     INNER JOIN dbo.Orders o ON rr.OrderId = o.OrderId
@@ -274,6 +288,9 @@ async function getReturnRequests(pool, filters = {}) {
       refundedAt: row.RefundedAt,
       createdAt: row.CreatedAt,
       updatedAt: row.UpdatedAt,
+      refundMethod: row.RefundMethod,
+      cancellationType: row.CancellationType,
+      auditLog: row.AuditLogJson ? JSON.parse(row.AuditLogJson) : null,
       items: itemsRes.recordset.map(i => ({
         returnItemId: i.ReturnItemId,
         productId: i.ProductId,
@@ -343,7 +360,7 @@ async function getOrderReturns(pool, orderRef, customerEmail) {
  * - Does NOT touch financials yet — that happens on refund.
  * - Transition: PENDING → APPROVED
  */
-async function approveReturn(pool, returnRequestId, adminEmail) {
+async function approveReturn(pool, returnRequestId, adminEmail, targetLedger = 'MASTER') {
   const transaction = pool.transaction();
   await transaction.begin();
 
@@ -352,7 +369,7 @@ async function approveReturn(pool, returnRequestId, adminEmail) {
     const reqRes = await transaction.request()
       .input('returnRequestId', sql.BigInt, returnRequestId)
       .query(`
-        SELECT Status, OrderId, CustomerEmail, RefundTotal
+        SELECT Status, OrderId, CustomerEmail, RefundTotal, AuditLogJson
         FROM dbo.ReturnRequests
         WHERE ReturnRequestId = @returnRequestId
       `);
@@ -365,6 +382,9 @@ async function approveReturn(pool, returnRequestId, adminEmail) {
       throw Object.assign(new Error(`Return request is in '${returnReq.Status}' state. Only PENDING requests can be approved.`), { code: 'INVALID_STATUS', status: 400 });
     }
 
+    // Resolve target ledger (MASTER or SELL)
+    const ledgerType = (targetLedger && ['SELL', 'MASTER'].includes(targetLedger.toUpperCase())) ? targetLedger.toUpperCase() : 'MASTER';
+
     // 2. Fetch return items with product info
     const itemsRes = await transaction.request()
       .input('returnRequestId', sql.BigInt, returnRequestId)
@@ -375,11 +395,11 @@ async function approveReturn(pool, returnRequestId, adminEmail) {
         WHERE ri.ReturnRequestId = @returnRequestId
       `);
 
-    // 3. Restore MASTER stock for each returned item
+    // 3. Restore stock for each returned item to target ledger
     for (const item of itemsRes.recordset) {
       await transaction.request()
         .input('ProductId', sql.Int, item.ProductId)
-        .input('LedgerType', sql.NVarChar(20), 'MASTER')
+        .input('LedgerType', sql.NVarChar(20), ledgerType)
         .input('TxnType', sql.NVarChar(30), 'IN')
         .input('Qty', sql.Int, item.Qty)
         .input('CreatedByEmail', sql.NVarChar(255), adminEmail)
@@ -389,15 +409,31 @@ async function approveReturn(pool, returnRequestId, adminEmail) {
         .execute('dbo.sp_InventoryApplyTransaction');
     }
 
+    // Update audit log
+    let auditLog = [];
+    try {
+      if (returnReq.AuditLogJson) {
+        auditLog = JSON.parse(returnReq.AuditLogJson);
+      }
+    } catch (e) {}
+    auditLog.push({
+      action: 'APPROVED',
+      timestamp: new Date().toISOString(),
+      user: adminEmail,
+      notes: `Approved return request. Stock reverted to ${ledgerType}.`
+    });
+
     // 4. Update status to APPROVED
     await transaction.request()
       .input('returnRequestId', sql.BigInt, returnRequestId)
       .input('approvedByEmail', sql.NVarChar(255), adminEmail)
+      .input('auditLogJson', sql.NVarChar(sql.MAX), JSON.stringify(auditLog))
       .query(`
         UPDATE dbo.ReturnRequests
         SET
           Status = 'APPROVED',
           ApprovedByEmail = @approvedByEmail,
+          AuditLogJson = @auditLogJson,
           UpdatedAt = SYSUTCDATETIME()
         WHERE ReturnRequestId = @returnRequestId
       `);
@@ -408,6 +444,8 @@ async function approveReturn(pool, returnRequestId, adminEmail) {
       returnRequestId,
       status: 'APPROVED',
       approvedBy: adminEmail,
+      targetLedger: ledgerType,
+      auditLog,
       itemsRestored: itemsRes.recordset.map(i => ({
         productId: i.ProductId,
         productName: i.ProductName,
@@ -425,16 +463,46 @@ async function approveReturn(pool, returnRequestId, adminEmail) {
  * Transition: PENDING → REJECTED
  */
 async function rejectReturn(pool, returnRequestId, adminEmail, rejectReason) {
+  const checkRes = await pool.request()
+    .input('returnRequestId', sql.BigInt, returnRequestId)
+    .query('SELECT Status, AuditLogJson FROM dbo.ReturnRequests WHERE ReturnRequestId = @returnRequestId');
+    
+  const returnReq = checkRes.recordset[0];
+  if (!returnReq) {
+    throw Object.assign(new Error('Return request not found.'), { code: 'NOT_FOUND', status: 404 });
+  }
+  if (returnReq.Status !== 'PENDING') {
+    throw Object.assign(
+      new Error(`Return request is in '${returnReq.Status}' state. Only PENDING requests can be rejected.`),
+      { code: 'INVALID_STATUS', status: 400 }
+    );
+  }
+
+  let auditLog = [];
+  try {
+    if (returnReq.AuditLogJson) {
+      auditLog = JSON.parse(returnReq.AuditLogJson);
+    }
+  } catch (e) {}
+  auditLog.push({
+    action: 'REJECTED',
+    timestamp: new Date().toISOString(),
+    user: adminEmail,
+    notes: rejectReason || 'Return request rejected'
+  });
+
   const res = await pool.request()
     .input('returnRequestId', sql.BigInt, returnRequestId)
     .input('approvedByEmail', sql.NVarChar(255), adminEmail)
     .input('rejectReason', sql.NVarChar(500), rejectReason || null)
+    .input('auditLogJson', sql.NVarChar(sql.MAX), JSON.stringify(auditLog))
     .query(`
       UPDATE dbo.ReturnRequests
       SET
         Status = 'REJECTED',
         ApprovedByEmail = @approvedByEmail,
         RejectReason = @rejectReason,
+        AuditLogJson = @auditLogJson,
         UpdatedAt = SYSUTCDATETIME()
       WHERE ReturnRequestId = @returnRequestId AND Status = 'PENDING'
 
@@ -444,26 +512,12 @@ async function rejectReturn(pool, returnRequestId, adminEmail, rejectReason) {
     `);
 
   const updated = res.recordset[0];
-  if (!updated) {
-    // Could mean not found or not in PENDING state
-    const check = await pool.request()
-      .input('returnRequestId', sql.BigInt, returnRequestId)
-      .query(`SELECT Status FROM dbo.ReturnRequests WHERE ReturnRequestId = @returnRequestId`);
-
-    if (!check.recordset[0]) {
-      throw Object.assign(new Error('Return request not found.'), { code: 'NOT_FOUND', status: 404 });
-    }
-    throw Object.assign(
-      new Error(`Return request is in '${check.recordset[0].Status}' state. Only PENDING requests can be rejected.`),
-      { code: 'INVALID_STATUS', status: 400 }
-    );
-  }
-
   return {
     returnRequestId,
     status: updated.Status,
     approvedBy: updated.ApprovedByEmail,
-    rejectReason: updated.RejectReason
+    rejectReason: updated.RejectReason,
+    auditLog: auditLog
   };
 }
 
@@ -482,7 +536,7 @@ async function processRefund(pool, returnRequestId, adminEmail) {
     const reqRes = await transaction.request()
       .input('returnRequestId', sql.BigInt, returnRequestId)
       .query(`
-        SELECT rr.Status, rr.OrderId, rr.RefundTotal, rr.CustomerEmail, o.OrderRef
+        SELECT rr.Status, rr.OrderId, rr.RefundTotal, rr.CustomerEmail, o.OrderRef, rr.AuditLogJson, rr.RefundMethod
         FROM dbo.ReturnRequests rr
         INNER JOIN dbo.Orders o ON rr.OrderId = o.OrderId
         WHERE rr.ReturnRequestId = @returnRequestId
@@ -511,7 +565,7 @@ async function processRefund(pool, returnRequestId, adminEmail) {
         WHERE ri.ReturnRequestId = @returnRequestId
       `);
 
-    // 3. Update each OrderProfitBreakdown row
+    // 3. Update each OrderProfitBreakdown row and reverse corresponding supplier commission
     let totalSupplierReversal = 0;
     for (const item of itemsWithBreakdown.recordset) {
       const refundLine = parseFloat(item.RefundLineAmount);
@@ -520,8 +574,6 @@ async function processRefund(pool, returnRequestId, adminEmail) {
       const currentSupplierPayable = parseFloat(item.SupplierPayable);
 
       // Calculate pro-rata supplier reversal for this item
-      // SupplierPayable is total for the breakdown row (for all ordered qty)
-      // The refund line amount is for the returned qty
       const orderedQtyBase = await transaction.request()
         .input('orderId', sql.BigInt, returnReq.OrderId)
         .input('productId', sql.Int, item.ProductId)
@@ -548,6 +600,54 @@ async function processRefund(pool, returnRequestId, adminEmail) {
             ProfitAfterReturn = @profitAfterReturn
           WHERE BreakdownId = @breakdownId
         `);
+
+      // Reverse Supplier Payout atomically in CommissionLedger
+      const commLedgerRes = await transaction.request()
+        .input('orderId', sql.BigInt, returnReq.OrderId)
+        .input('productId', sql.Int, item.ProductId)
+        .query(`
+          SELECT EntryId, SaleAmount, CommissionAmount, SupplierPayable 
+          FROM dbo.CommissionLedger 
+          WHERE OrderId = @orderId AND ProductId = @productId AND Status != 'CANCELLED'
+        `);
+
+      const commEntry = commLedgerRes.recordset[0];
+      if (commEntry) {
+        if (item.Qty === orderedQty) {
+          // Full return: cancel commission entry
+          await transaction.request()
+            .input('entryId', sql.BigInt, commEntry.EntryId)
+            .query(`
+              UPDATE dbo.CommissionLedger 
+              SET Status = 'CANCELLED', SupplierPayable = 0.00, SaleAmount = 0.00, CommissionAmount = 0.00, PaidAt = NULL
+              WHERE EntryId = @entryId
+            `);
+        } else {
+          // Partial return: deduct pro-rata
+          const currentLedgerPayable = parseFloat(commEntry.SupplierPayable);
+          const currentLedgerComm = parseFloat(commEntry.CommissionAmount);
+          const currentLedgerSale = parseFloat(commEntry.SaleAmount);
+
+          const supplierReversalAmount = (item.Qty / orderedQty) * currentLedgerPayable;
+          const commReversalAmount = (item.Qty / orderedQty) * currentLedgerComm;
+          const saleReversalAmount = (item.Qty / orderedQty) * currentLedgerSale;
+
+          const newLedgerPayable = Math.max(0, currentLedgerPayable - supplierReversalAmount);
+          const newLedgerComm = Math.max(0, currentLedgerComm - commReversalAmount);
+          const newLedgerSale = Math.max(0, currentLedgerSale - saleReversalAmount);
+
+          await transaction.request()
+            .input('entryId', sql.BigInt, commEntry.EntryId)
+            .input('saleAmount', sql.Decimal(18, 2), newLedgerSale)
+            .input('commissionAmount', sql.Decimal(18, 2), newLedgerComm)
+            .input('supplierPayable', sql.Decimal(18, 2), newLedgerPayable)
+            .query(`
+              UPDATE dbo.CommissionLedger 
+              SET SaleAmount = @saleAmount, CommissionAmount = @commissionAmount, SupplierPayable = @supplierPayable
+              WHERE EntryId = @entryId
+            `);
+        }
+      }
     }
 
     // 4. Record the refund in WalletTransactions for audit trail
@@ -563,14 +663,30 @@ async function processRefund(pool, returnRequestId, adminEmail) {
         VALUES (@txnType, @amount, @notes, @source, @createdByEmail)
       `);
 
+    // Update audit log
+    let auditLog = [];
+    try {
+      if (returnReq.AuditLogJson) {
+        auditLog = JSON.parse(returnReq.AuditLogJson);
+      }
+    } catch (e) {}
+    auditLog.push({
+      action: 'REFUNDED',
+      timestamp: new Date().toISOString(),
+      user: adminEmail,
+      notes: `Processed refund via ${returnReq.RefundMethod || 'STORE_CREDIT'}`
+    });
+
     // 5. Update status to REFUNDED
     await transaction.request()
       .input('returnRequestId', sql.BigInt, returnRequestId)
+      .input('auditLogJson', sql.NVarChar(sql.MAX), JSON.stringify(auditLog))
       .query(`
         UPDATE dbo.ReturnRequests
         SET
           Status = 'REFUNDED',
           RefundedAt = SYSUTCDATETIME(),
+          AuditLogJson = @auditLogJson,
           UpdatedAt = SYSUTCDATETIME()
         WHERE ReturnRequestId = @returnRequestId
       `);
@@ -584,6 +700,7 @@ async function processRefund(pool, returnRequestId, adminEmail) {
       refundTotal: refundAmount,
       refundedBy: adminEmail,
       refundedAt: new Date().toISOString(),
+      auditLog,
       supplierPayableReversed: parseFloat(totalSupplierReversal.toFixed(2))
     };
   } catch (err) {

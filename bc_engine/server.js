@@ -19,6 +19,9 @@ const commissionRoutes = require('./routes/commissionRoutes');
 const revenueRoutes = require('./routes/revenueRoutes');
 const healthRoutes = require('./src/routes/healthRoutes');
 const licenseRoutes = require('./routes/licenseRoutes');
+const promotionRoutes = require('./routes/promotionRoutes');
+const grnRoutes = require('./routes/grnRoutes');
+const marketingBudgetRoutes = require('./routes/marketingBudgetRoutes');
 
 // Observability Additions
 const reqId = require("./src/middleware/reqId");
@@ -121,6 +124,9 @@ app.use('/api', revenueRoutes);
 app.use('/', healthRoutes); // GET /health/deep
 app.use('/api', licenseRoutes);
 app.use('/api', require('./routes/onboardingRoutes'));
+app.use('/api', promotionRoutes);
+app.use('/api', grnRoutes);
+app.use('/api', marketingBudgetRoutes);
 
 // Global http error tracking middleware
 app.use((err, req, res, _next) => {
