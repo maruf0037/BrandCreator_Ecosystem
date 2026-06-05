@@ -2,12 +2,19 @@
 const express = require('express');
 const passport = require('passport');
 const authController = require('../controllers/authController');
+const { devAuthSimulator } = require('../src/middleware/auth');
 
 const router = express.Router();
 
 // Trigger Google OAuth flow
 router.get(
   '/google',
+  (req, res, next) => {
+    if (req.query.role) {
+      req.session.oauthRole = req.query.role;
+    }
+    next();
+  },
   passport.authenticate('google', {
     scope: ['profile', 'email']
   })
@@ -21,7 +28,8 @@ router.get(
 );
 
 // Fetch current logged in user details
-router.get('/current-user', authController.getCurrentUser);
+// devAuthSimulator allows x-user-* headers to set req.user in non-production
+router.get('/current-user', devAuthSimulator, authController.getCurrentUser);
 
 // Local development bypass simulation login
 router.post('/simulate', authController.simulateLogin);

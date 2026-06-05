@@ -9,9 +9,9 @@ export default function Login() {
   const [error, setError] = useState('');
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
-  const handleGoogleLogin = () => {
-    // Direct link to Express server authorization route
-    window.location.href = `${backendUrl}/auth/google`;
+  const handleGoogleLogin = (role) => {
+    // Direct link to Express server authorization route with role query parameter
+    window.location.href = `${backendUrl}/auth/google?role=${role}`;
   };
 
   const handleSimulatedLogin = async (email, role) => {
@@ -29,6 +29,11 @@ export default function Login() {
         throw new Error(data.message || 'Simulated login failed');
       }
       
+      // Cache user for x-user-* header injection in api.js
+      try {
+        sessionStorage.setItem('bc_user', JSON.stringify({ email, role }));
+      } catch (_) {}
+
       // Redirect based on role
       if (role === 'SuperAdmin' || role === 'Admin') {
         navigate('/admin');
@@ -90,17 +95,56 @@ export default function Login() {
           Sign in to access your customized role-based dashboard, inventory ledger, and AI production tools.
         </p>
 
-        {/* OAuth Authentication Button */}
-        <button 
-          onClick={handleGoogleLogin} 
-          className="btn-primary" 
-          style={{ width: '100%', padding: '16px', borderRadius: '14px', marginBottom: '32px' }}
-        >
-          <svg style={{ width: '20px', height: '20px', fill: 'currentColor' }} viewBox="0 0 24 24">
-            <path d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C17.955 2.192 15.34 1 12.24 1 6.12 1 1.16 5.94 1.16 12s4.96 11 11.08 11c6.39 0 10.63-4.484 10.63-10.82 0-.727-.08-1.284-.175-1.895H12.24z"/>
-          </svg>
-          Continue with Google
-        </button>
+        {/* OAuth Authentication Buttons */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '32px' }}>
+          <button 
+            onClick={() => handleGoogleLogin('Customer')} 
+            className="btn-primary" 
+            style={{ 
+              width: '100%', 
+              padding: '14px', 
+              borderRadius: '12px',
+              background: 'linear-gradient(135deg, hsl(var(--primary)) 0%, #1e40af 100%)',
+              border: 'none',
+              color: 'white',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '10px'
+            }}
+          >
+            <svg style={{ width: '18px', height: '18px', fill: 'currentColor' }} viewBox="0 0 24 24">
+              <path d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C17.955 2.192 15.34 1 12.24 1 6.12 1 1.16 5.94 1.16 12s4.96 11 11.08 11c6.39 0 10.63-4.484 10.63-10.82 0-.727-.08-1.284-.175-1.895H12.24z"/>
+            </svg>
+            Shop Now (Customer Google Login)
+          </button>
+          
+          <button 
+            onClick={() => handleGoogleLogin('Supplier')} 
+            className="btn-secondary"
+            style={{ 
+              width: '100%', 
+              padding: '14px', 
+              borderRadius: '12px',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              background: 'rgba(255, 255, 255, 0.03)',
+              color: 'white',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '10px'
+            }}
+          >
+            <svg style={{ width: '18px', height: '18px', fill: 'currentColor' }} viewBox="0 0 24 24">
+              <path d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C17.955 2.192 15.34 1 12.24 1 6.12 1 1.16 5.94 1.16 12s4.96 11 11.08 11c6.39 0 10.63-4.484 10.63-10.82 0-.727-.08-1.284-.175-1.895H12.24z"/>
+            </svg>
+            Become a Supplier (Google Login)
+          </button>
+        </div>
 
         {error && (
           <div style={{
@@ -151,23 +195,44 @@ export default function Login() {
               <button
                 onClick={() => handleSimulatedLogin('md.marufalrashid@gmail.com', 'SuperAdmin')}
                 className="btn-secondary"
-                style={{ fontSize: '0.85rem', padding: '12px', borderRadius: '10px', cursor: 'pointer' }}
+                style={{ fontSize: '0.8rem', padding: '10px', borderRadius: '10px', cursor: 'pointer' }}
               >
                 SuperAdmin
               </button>
               <button
-                onClick={() => handleSimulatedLogin('supplier@example.com', 'Supplier')}
+                onClick={() => handleSimulatedLogin('approved@example.com', 'Supplier')}
                 className="btn-secondary"
-                style={{ fontSize: '0.85rem', padding: '12px', borderRadius: '10px', cursor: 'pointer' }}
+                style={{ fontSize: '0.8rem', padding: '10px', borderRadius: '10px', cursor: 'pointer' }}
               >
-                Supplier
+                Supplier (Approved)
               </button>
               <button
-                onClick={() => handleSimulatedLogin('customer@example.com', 'Customer')}
+                onClick={() => handleSimulatedLogin('pending@example.com', 'Supplier')}
                 className="btn-secondary"
-                style={{ fontSize: '0.85rem', padding: '12px', borderRadius: '10px', gridColumn: 'span 2', cursor: 'pointer' }}
+                style={{ fontSize: '0.8rem', padding: '10px', borderRadius: '10px', cursor: 'pointer' }}
               >
-                Customer Storefront Shop
+                Supplier (Pending)
+              </button>
+              <button
+                onClick={() => handleSimulatedLogin('rejected@example.com', 'Supplier')}
+                className="btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '10px', borderRadius: '10px', cursor: 'pointer' }}
+              >
+                Supplier (Rejected)
+              </button>
+              <button
+                onClick={() => handleSimulatedLogin('newcust@example.com', 'Customer')}
+                className="btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '10px', borderRadius: '10px', cursor: 'pointer' }}
+              >
+                Customer (Incomplete)
+              </button>
+              <button
+                onClick={() => handleSimulatedLogin('customer_complete@example.com', 'Customer')}
+                className="btn-secondary"
+                style={{ fontSize: '0.8rem', padding: '10px', borderRadius: '10px', cursor: 'pointer' }}
+              >
+                Customer (Complete)
               </button>
             </div>
           </div>

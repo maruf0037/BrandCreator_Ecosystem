@@ -20,6 +20,17 @@ async function apiFetch(endpoint, options = {}) {
     ...options.headers,
   };
 
+  // Inject cached user headers as backup for cross-port session cookie issues
+  // devAuthSimulator in auth.js reads x-user-email / x-user-role when NODE_ENV != production
+  try {
+    const cachedUser = sessionStorage.getItem('bc_user');
+    if (cachedUser) {
+      const u = JSON.parse(cachedUser);
+      if (u.email) headers['x-user-email'] = u.email;
+      if (u.role)  headers['x-user-role']  = u.role;
+    }
+  } catch (_) { /* ignore */ }
+
   const config = {
     ...options,
     headers,

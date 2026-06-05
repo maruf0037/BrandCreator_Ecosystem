@@ -229,6 +229,6 @@ async function runE2EWalkthrough() {
 }
 
 runE2EWalkthrough().catch(err => {
-  console.error('\n❌ E2E WALKTHROUGH FAILED:', err.message);
+  console.error('\n❌ E2E WALKTHROUGH FAILED:', err);
   process.exit(1);
 });

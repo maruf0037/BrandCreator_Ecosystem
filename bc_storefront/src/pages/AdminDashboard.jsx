@@ -207,6 +207,10 @@ export default function AdminDashboard({ currentUser }) {
   const [walletAuditReport, setWalletAuditReport] = useState(null);
   const [walletHistory, setWalletHistory] = useState([]);
   
+  // Onboarding state variables
+  const [onboardings, setOnboardings] = useState([]);
+  const [onboardingsLoading, setOnboardingsLoading] = useState(false);
+  
   // Phase 2: Hybrid Model State
   const [revenueSummary, setRevenueSummary] = useState(null);
   const [revenueLoading, setRevenueLoading] = useState(false);
@@ -258,16 +262,18 @@ export default function AdminDashboard({ currentUser }) {
   const [panelErrors, setPanelErrors] = useState({});
   const [actionSuccess, setActionSuccess] = useState('');
 
-  // POS (Physical Shop Sale) State
-  const [posCart, setPosCart] = useState([]);
-  const [posSelectedProductId, setPosSelectedProductId] = useState('');
-  const [posSelectedQty, setPosSelectedQty] = useState(1);
-  const [posSelectedPrice, setPosSelectedPrice] = useState('');
-  const [posPhone, setPosPhone] = useState('');
-  const [posPaymentMethod, setPosPaymentMethod] = useState('CASH');
-  const [posCheckingOut, setPosCheckingOut] = useState(false);
-  const [posError, setPosError] = useState(null);
-  const [posSuccess, setPosSuccess] = useState('');
+  // License Management States
+  const [licenses, setLicenses] = useState([]);
+  const [licensesLoading, setLicensesLoading] = useState(false);
+  const [showIssueModal, setShowIssueModal] = useState(false);
+  const [newLicenseEmail, setNewLicenseEmail] = useState('');
+  const [newLicenseFee, setNewLicenseFee] = useState('');
+  const [newLicenseExpiry, setNewLicenseExpiry] = useState('');
+  const [newLicenseNotes, setNewLicenseNotes] = useState('');
+  const [showRenewModal, setShowRenewModal] = useState(false);
+  const [renewLicenseId, setRenewLicenseId] = useState(null);
+  const [renewDays, setRenewDays] = useState(30);
+
 
   // Forms / Modals state
   const [assigningProductId, setAssigningProductId] = useState(null);
@@ -546,116 +552,132 @@ export default function AdminDashboard({ currentUser }) {
       fetchRevenueData();
     } else if (activeTab === 'commissions') {
       fetchCommissionData();
+    } else if (activeTab === 'licenses') {
+      fetchLicenses();
+    } else if (activeTab === 'onboardings') {
+      fetchOnboardings();
     }
   }, [activeTab, revenueFilter, commissionFilters]);
+
+  const fetchLicenses = async () => {
+    setLicensesLoading(true);
+    setError(null);
+    try {
+      const res = await api.get('/api/admin/licenses');
+      setLicenses(res.licenses || []);
+    } catch (err) {
+      setError(err.message || 'Failed to fetch supplier licenses');
+    } finally {
+      setLicensesLoading(false);
+    }
+  };
+
+  const fetchOnboardings = async () => {
+    setOnboardingsLoading(true);
+    setError(null);
+    try {
+      const res = await api.get('/api/admin/onboarding/pending');
+      if (res.success) {
+        setOnboardings(res.profiles || []);
+      }
+    } catch (err) {
+      console.error('Error fetching onboardings:', err);
+      setError('Failed to fetch pending onboardings.');
+    } finally {
+      setOnboardingsLoading(false);
+    }
+  };
+
+  const handleApproveOnboarding = async (email) => {
+    setError(null);
+    try {
+      const res = await api.post(`/api/admin/onboarding/${email}/approve`);
+      if (res.success) {
+        fetchOnboardings();
+        showToast('Supplier approved successfully!');
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to approve supplier.');
+    }
+  };
+
+  const handleRejectOnboarding = async (email) => {
+    const reason = prompt('Please specify a rejection reason:');
+    if (!reason) return;
+    setError(null);
+    try {
+      const res = await api.post(`/api/admin/onboarding/${email}/reject`, { rejectReason: reason });
+      if (res.success) {
+        fetchOnboardings();
+        showToast('Supplier application rejected.');
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to reject supplier.');
+    }
+  };
+
+  const handleIssueLicense = async (e) => {
+    e.preventDefault();
+    if (!newLicenseEmail.trim()) {
+      setError('Supplier email is required');
+      return;
+    }
+    try {
+      setError(null);
+      await api.post('/api/admin/licenses', {
+        supplierEmail: newLicenseEmail.trim(),
+        monthlyFee: newLicenseFee || 0,
+        expiresAt: newLicenseExpiry || null,
+        notes: newLicenseNotes || ''
+      });
+      showToast('License issued successfully');
+      setShowIssueModal(false);
+      setNewLicenseEmail('');
+      setNewLicenseFee('');
+      setNewLicenseExpiry('');
+      setNewLicenseNotes('');
+      fetchLicenses();
+    } catch (err) {
+      setError(err.message || 'Failed to issue license');
+    }
+  };
+
+  const handleRenewLicense = async (e) => {
+    e.preventDefault();
+    if (!renewLicenseId) return;
+    try {
+      setError(null);
+      await api.patch(`/api/admin/licenses/${renewLicenseId}/renew`, {
+        days: renewDays || 30
+      });
+      showToast('License renewed successfully');
+      setShowRenewModal(false);
+      fetchLicenses();
+    } catch (err) {
+      setError(err.message || 'Failed to renew license');
+    }
+  };
+
+  const handleRevokeLicense = async (licenseId) => {
+    if (!window.confirm('Are you sure you want to revoke this license? The supplier will lose POS access.')) {
+      return;
+    }
+    try {
+      setError(null);
+      await api.patch(`/api/admin/licenses/${licenseId}/revoke`);
+      showToast('License revoked successfully');
+      fetchLicenses();
+    } catch (err) {
+      setError(err.message || 'Failed to revoke license');
+    }
+  };
 
   const handleLogout = () => {
     window.location.href = `${backendUrl}/auth/logout`;
   };
 
-  // POS Checkout Helpers
-  const handleAddToPosCart = () => {
-    if (!posSelectedProductId) {
-      setPosError('Please select a product first.');
-      return;
-    }
-    const product = products.find(p => p.productId === parseInt(posSelectedProductId, 10));
-    if (!product) {
-      setPosError('Selected product not found.');
-      return;
-    }
-    const qty = parseInt(posSelectedQty, 10);
-    if (isNaN(qty) || qty <= 0) {
-      setPosError('Quantity must be greater than zero.');
-      return;
-    }
-
-    const price = parseFloat(posSelectedPrice || product.suggestedRetailPrice || product.rpuMrp || 0);
-    if (isNaN(price) || price < 0) {
-      setPosError('Price must be a valid non-negative number.');
-      return;
-    }
-
-    const available = product.masterOnHand - (product.masterReserved || 0);
-    const existing = posCart.find(item => item.productId === product.productId);
-    const needed = (existing ? existing.qty : 0) + qty;
-
-    if (needed > available) {
-      setPosError(`Cannot add. Total requested qty (${needed}) exceeds available MASTER stock (${available}).`);
-      return;
-    }
-
-    setPosError(null);
-    setPosSuccess('');
-
-    if (existing) {
-      setPosCart(posCart.map(item => 
-        item.productId === product.productId 
-          ? { ...item, qty: needed, price } 
-          : item
-      ));
-    } else {
-      setPosCart([...posCart, {
-        productId: product.productId,
-        productName: product.productName,
-        sku: product.sku,
-        qty,
-        price
-      }]);
-    }
-
-    setPosSelectedProductId('');
-    setPosSelectedQty(1);
-    setPosSelectedPrice('');
-  };
-
-  const handleRemoveFromPosCart = (productId) => {
-    setPosCart(posCart.filter(item => item.productId !== productId));
-    setPosError(null);
-    setPosSuccess('');
-  };
-
-  const handlePosCheckout = async (e) => {
-    if (e) e.preventDefault();
-    if (posCart.length === 0) {
-      setPosError('Cart is empty. Please add items to checkout.');
-      return;
-    }
-
-    setPosCheckingOut(true);
-    setPosError(null);
-    setPosSuccess('');
-
-    try {
-      const orderRef = 'POS-ORD-' + Math.floor(100000 + Math.random() * 900000);
-      const itemsPayload = posCart.map(item => ({
-        productId: item.productId,
-        qty: item.qty,
-        unitPrice: item.price
-      }));
-
-      await api.post('/api/orders', {
-        orderRef,
-        items: itemsPayload,
-        currency: 'BDT',
-        customerPhone: posPhone.trim() || null,
-        saleChannel: 'PHYSICAL_SHOP',
-        paymentMethod: posPaymentMethod
-      });
-
-      setPosSuccess(`Physical sale recorded successfully! Order Ref: ${orderRef}`);
-      setPosCart([]);
-      setPosPhone('');
-      setPosPaymentMethod('CASH');
-      
-      // Update all dashboard statistics
-      fetchAllData();
-    } catch (err) {
-      setPosError(err.message || 'Checkout failed. Please inspect quantities and try again.');
-    } finally {
-      setPosCheckingOut(false);
-    }
-  };
 
   const showToast = (message) => {
     setActionSuccess(message);
@@ -1162,16 +1184,6 @@ export default function AdminDashboard({ currentUser }) {
             </li>
             <li>
               <button 
-                onClick={() => setActiveTab('physicalSale')} 
-                className={`sidebar-link w-full text-left ${activeTab === 'physicalSale' ? 'active' : ''}`}
-                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <Layers size={18} style={{ color: 'hsl(var(--primary))' }} />
-                POS / Physical Sale
-              </button>
-            </li>
-            <li>
-              <button 
                 onClick={() => setActiveTab('revenue')} 
                 className={`sidebar-link w-full text-left ${activeTab === 'revenue' ? 'active' : ''}`}
                 style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
@@ -1218,6 +1230,26 @@ export default function AdminDashboard({ currentUser }) {
               >
                 <MessageCircle size={18} />
                 WhatsApp CRM
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => setActiveTab('licenses')} 
+                className={`sidebar-link w-full text-left ${activeTab === 'licenses' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <KeyRound size={18} />
+                Supplier Licenses
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => setActiveTab('onboardings')} 
+                className={`sidebar-link w-full text-left ${activeTab === 'onboardings' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <UserPlus size={18} />
+                Pending Onboardings
               </button>
             </li>
           </ul>
@@ -3730,189 +3762,6 @@ export default function AdminDashboard({ currentUser }) {
                 </div>
               )}
 
-              {/* TAB 9.5: POS / PHYSICAL SALE */}
-              {activeTab === 'physicalSale' && (
-                <div className="tab-animation">
-                  <div style={{ marginBottom: '28px' }}>
-                    <h2 style={{ fontSize: '1.75rem', marginBottom: '6px' }}>POS / Physical Shop Sale</h2>
-                    <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.925rem' }}>
-                      Record instant walk-in physical sales directly reducing MASTER stock pool.
-                    </p>
-                  </div>
-
-                  {posError && (
-                    <div className="glass-card" style={{ padding: '16px', background: 'rgba(234, 67, 53, 0.1)', borderColor: 'rgba(234, 67, 53, 0.25)', color: '#ea4335', marginBottom: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <AlertTriangle size={18} />
-                      <span style={{ fontSize: '0.9rem', fontWeight: '600' }}>{posError}</span>
-                    </div>
-                  )}
-
-                  {posSuccess && (
-                    <div className="glass-card" style={{ padding: '16px', background: 'rgba(52, 168, 83, 0.1)', borderColor: 'rgba(52, 168, 83, 0.25)', color: '#34a853', marginBottom: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <Check size={18} />
-                      <span style={{ fontSize: '0.9rem', fontWeight: '600' }}>{posSuccess}</span>
-                    </div>
-                  )}
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 450px', gap: '30px', alignItems: 'start' }}>
-                    {/* Left Column: Product Selector & Add Form */}
-                    <div className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      <h3 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px' }}>
-                        Add Product to Cart
-                      </h3>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <label style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>SELECT PRODUCT</label>
-                        <select 
-                          value={posSelectedProductId} 
-                          onChange={(e) => {
-                            setPosSelectedProductId(e.target.value);
-                            const prod = products.find(p => p.productId === parseInt(e.target.value, 10));
-                            if (prod) {
-                              setPosSelectedPrice(prod.suggestedRetailPrice || prod.rpuMrp || '');
-                            } else {
-                              setPosSelectedPrice('');
-                            }
-                          }}
-                          className="styled-input"
-                          style={{ textTransform: 'none' }}
-                        >
-                          <option value="">-- Choose Product --</option>
-                          {products.filter(p => p.qcStatus === 'APPROVED').map(p => {
-                            const avail = p.masterOnHand - (p.masterReserved || 0);
-                            return (
-                              <option key={p.productId} value={p.productId} disabled={avail <= 0}>
-                                {p.productName} (SKU: {p.sku}) | Stock: {avail} units | SRP: ৳{p.suggestedRetailPrice || '0.00'}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <label style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>QUANTITY</label>
-                          <input 
-                            type="number" 
-                            min="1"
-                            value={posSelectedQty} 
-                            onChange={(e) => setPosSelectedQty(parseInt(e.target.value, 10) || 1)}
-                            className="styled-input" 
-                          />
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <label style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>UNIT PRICE (৳)</label>
-                          <input 
-                            type="number" 
-                            step="0.01"
-                            placeholder="Default to Retail"
-                            value={posSelectedPrice} 
-                            onChange={(e) => setPosSelectedPrice(e.target.value)}
-                            className="styled-input" 
-                          />
-                        </div>
-                      </div>
-
-                      <button 
-                        onClick={handleAddToPosCart}
-                        className="btn-primary"
-                        style={{ marginTop: '10px', padding: '12px' }}
-                      >
-                        Add to Cart
-                      </button>
-                    </div>
-
-                    {/* Right Column: POS Cart & Checkout */}
-                    <div className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      <h3 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>POS Cart</span>
-                        <span style={{ fontSize: '0.9rem', background: 'rgba(255,255,255,0.06)', padding: '2px 8px', borderRadius: '6px', color: 'hsl(var(--primary))' }}>
-                          {posCart.reduce((sum, item) => sum + item.qty, 0)} items
-                        </span>
-                      </h3>
-
-                      {posCart.length === 0 ? (
-                        <div style={{ padding: '40px 0', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
-                          POS Cart is empty. Select products on the left.
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                          <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }} className="custom-scrollbar">
-                            {posCart.map(item => (
-                              <div key={item.productId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                                <div>
-                                  <div style={{ fontWeight: '700', fontSize: '0.875rem', color: '#fff' }}>{item.productName}</div>
-                                  <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', marginTop: '3px' }}>
-                                    {item.qty} units × ৳{item.price}
-                                  </div>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                  <span style={{ fontWeight: '700', color: '#fff' }}>৳{item.qty * item.price}</span>
-                                  <button 
-                                    onClick={() => handleRemoveFromPosCart(item.productId)}
-                                    style={{ background: 'rgba(234, 67, 53, 0.1)', border: 'none', color: '#ea4335', padding: '6px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                  >
-                                    <X size={14} />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-
-                          <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                            {/* Total Display */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '1rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>TOTAL AMOUNT</span>
-                              <span style={{ fontSize: '1.5rem', fontWeight: '800', color: 'hsl(var(--primary))' }}>
-                                ৳{posCart.reduce((sum, item) => sum + (item.price * item.qty), 0)}
-                              </span>
-                            </div>
-
-                            {/* Customer Phone & Payment Method */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>CUSTOMER PHONE (OPTIONAL)</label>
-                                <input 
-                                  type="text" 
-                                  placeholder="017xxxxxxxx"
-                                  value={posPhone} 
-                                  onChange={(e) => setPosPhone(e.target.value)}
-                                  className="styled-input" 
-                                />
-                              </div>
-
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>PAYMENT METHOD</label>
-                                <select 
-                                  value={posPaymentMethod} 
-                                  onChange={(e) => setPosPaymentMethod(e.target.value)}
-                                  className="styled-input"
-                                >
-                                  <option value="CASH">CASH</option>
-                                  <option value="CARD">CARD</option>
-                                  <option value="BKASH">BKASH</option>
-                                </select>
-                              </div>
-                            </div>
-
-                            <button 
-                              onClick={handlePosCheckout}
-                              disabled={posCheckingOut}
-                              className="btn-primary"
-                              style={{ padding: '14px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                            >
-                              <Check size={18} />
-                              {posCheckingOut ? 'Recording...' : 'Confirm Physical Sale'}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* TAB: REVENUE DASHBOARD */}
               {activeTab === 'revenue' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }} className="tab-animation">
@@ -4931,6 +4780,218 @@ export default function AdminDashboard({ currentUser }) {
                 </div>
               )}
 
+              {/* TAB: SUPPLIER LICENSES */}
+              {activeTab === 'licenses' && (
+                <div className="tab-animation" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#fff', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <KeyRound style={{ color: 'hsl(var(--primary))' }} size={28} />
+                        Supplier License Key System
+                      </h2>
+                      <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem', marginTop: '4px' }}>
+                        Manage license keys, view status, issue new software licenses, or extend access for suppliers.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowIssueModal(true)}
+                      className="btn-primary"
+                      style={{ padding: '12px 20px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: '700' }}
+                    >
+                      <UserPlus size={16} />
+                      Issue New License
+                    </button>
+                  </div>
+
+                  <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
+                    {licensesLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+                        <div className="spin-anim" style={{ width: '30px', height: '30px', border: '3px solid rgba(255,255,255,0.06)', borderTopColor: 'hsl(var(--primary))', borderRadius: '50%' }} />
+                      </div>
+                    ) : licenses.length === 0 ? (
+                      <div style={{ padding: '60px 20px', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>
+                        <KeyRound size={48} style={{ color: 'rgba(255,255,255,0.05)', marginBottom: '16px' }} />
+                        <p style={{ fontSize: '1rem', fontWeight: '500' }}>No supplier licenses issued yet.</p>
+                        <p style={{ fontSize: '0.82rem', marginTop: '4px' }}>Click "Issue New License" above to grant POS access to a supplier.</p>
+                      </div>
+                    ) : (
+                      <table className="styled-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>License Key</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Supplier Email</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Monthly Fee</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Issued At</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Expires At</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Status</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Notes</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))', textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {licenses.map((lic) => {
+                            const isExpired = lic.ExpiresAt && new Date(lic.ExpiresAt) < new Date();
+                            const isValid = lic.IsActive && !isExpired && !lic.RevokedAt;
+                            
+                            return (
+                              <tr key={lic.LicenseId} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', transition: 'background 0.2s' }} className="table-row-hover">
+                                <td style={{ padding: '14px' }}>
+                                  <span style={{
+                                    fontFamily: 'monospace',
+                                    fontSize: '0.85rem',
+                                    background: 'rgba(255,255,255,0.04)',
+                                    padding: '4px 8px',
+                                    borderRadius: '6px',
+                                    border: '1px solid rgba(255,255,255,0.06)',
+                                    color: isValid ? 'hsl(var(--primary))' : 'hsl(var(--text-muted))',
+                                    fontWeight: '700'
+                                  }}>
+                                    {lic.LicenseKey}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '14px', fontSize: '0.88rem', color: '#fff' }}>{lic.SupplierEmail}</td>
+                                <td style={{ padding: '14px', fontSize: '0.88rem', color: '#fff', fontWeight: '700' }}>
+                                  ৳{parseFloat(lic.MonthlyFee).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                </td>
+                                <td style={{ padding: '14px', fontSize: '0.8rem', color: 'hsl(var(--text-secondary))' }}>
+                                  {new Date(lic.IssuedAt).toLocaleDateString()}
+                                </td>
+                                <td style={{ padding: '14px', fontSize: '0.8rem', color: 'hsl(var(--text-secondary))' }}>
+                                  {lic.ExpiresAt ? new Date(lic.ExpiresAt).toLocaleDateString() : 'Never'}
+                                </td>
+                                <td style={{ padding: '14px' }}>
+                                  {lic.RevokedAt ? (
+                                    <span style={{ fontSize: '0.75rem', padding: '4px 8px', borderRadius: '20px', background: 'rgba(234, 67, 53, 0.1)', color: '#ea4335', fontWeight: '700', border: '1px solid rgba(234, 67, 53, 0.2)' }}>
+                                      Revoked
+                                    </span>
+                                  ) : isExpired ? (
+                                    <span style={{ fontSize: '0.75rem', padding: '4px 8px', borderRadius: '20px', background: 'rgba(242, 153, 74, 0.1)', color: '#f2994a', fontWeight: '700', border: '1px solid rgba(242, 153, 74, 0.2)' }}>
+                                      Expired
+                                    </span>
+                                  ) : !lic.IsActive ? (
+                                    <span style={{ fontSize: '0.75rem', padding: '4px 8px', borderRadius: '20px', background: 'rgba(255, 255, 255, 0.05)', color: 'hsl(var(--text-muted))', fontWeight: '700', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                                      Inactive
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize: '0.75rem', padding: '4px 8px', borderRadius: '20px', background: 'rgba(52, 168, 83, 0.1)', color: '#34a853', fontWeight: '700', border: '1px solid rgba(52, 168, 83, 0.2)' }}>
+                                      Active
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ padding: '14px', fontSize: '0.8rem', color: 'hsl(var(--text-muted))', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {lic.Notes || '—'}
+                                </td>
+                                <td style={{ padding: '14px', textAlign: 'right' }}>
+                                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                    <button
+                                      onClick={() => { setRenewLicenseId(lic.LicenseId); setShowRenewModal(true); }}
+                                      className="btn-secondary"
+                                      style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.78rem' }}
+                                    >
+                                      Renew
+                                    </button>
+                                    {isValid && (
+                                      <button
+                                        onClick={() => handleRevokeLicense(lic.LicenseId)}
+                                        className="btn-danger"
+                                        style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.78rem', background: 'rgba(234, 67, 53, 0.15)', border: '1px solid rgba(234, 67, 53, 0.3)', color: '#ea4335' }}
+                                      >
+                                        Revoke
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: PENDING ONBOARDINGS */}
+              {activeTab === 'onboardings' && (
+                <div className="tab-animation" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#fff', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <UserPlus style={{ color: 'hsl(var(--primary))' }} size={28} />
+                        Pending Supplier Onboardings
+                      </h2>
+                      <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.9rem', marginTop: '4px' }}>
+                        Review, verify, and approve new supplier partnership registrations.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="glass-card" style={{ padding: '24px', overflowX: 'auto' }}>
+                    {onboardingsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+                        <div className="spin-anim" style={{ width: '30px', height: '30px', border: '3px solid rgba(255,255,255,0.06)', borderTopColor: 'hsl(var(--primary))', borderRadius: '50%' }} />
+                      </div>
+                    ) : onboardings.length === 0 ? (
+                      <div style={{ padding: '60px 20px', textAlign: 'center', color: 'hsl(var(--text-muted))' }}>
+                        <UserPlus size={48} style={{ color: 'rgba(255,255,255,0.05)', marginBottom: '16px' }} />
+                        <p style={{ fontSize: '1rem', fontWeight: '500' }}>No pending onboardings.</p>
+                        <p style={{ fontSize: '0.82rem', marginTop: '4px' }}>New supplier registrations waiting for review will appear here.</p>
+                      </div>
+                    ) : (
+                      <table className="styled-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Shop / Brand</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Contact</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Location</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Identifiers</th>
+                            <th style={{ padding: '14px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'hsl(var(--text-muted))' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {onboardings.map((prof) => (
+                            <tr key={prof.Email} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                              <td style={{ padding: '14px' }}>
+                                <div style={{ fontWeight: '700', color: '#fff' }}>{prof.ShopName}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>{prof.Email}</div>
+                              </td>
+                              <td style={{ padding: '14px', color: 'hsl(var(--text-secondary))' }}>
+                                {prof.PhoneNumber}
+                              </td>
+                              <td style={{ padding: '14px', color: 'hsl(var(--text-secondary))' }}>
+                                {prof.ShopLocation}
+                              </td>
+                              <td style={{ padding: '14px', fontSize: '0.8rem' }}>
+                                <div style={{ color: 'hsl(var(--text-secondary))' }}><strong>NID:</strong> {prof.NID}</div>
+                                <div style={{ color: 'hsl(var(--text-secondary))' }}><strong>License:</strong> {prof.TradeLicense}</div>
+                              </td>
+                              <td style={{ padding: '14px' }}>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button
+                                    onClick={() => handleApproveOnboarding(prof.Email)}
+                                    className="btn-primary"
+                                    style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer', background: 'hsl(var(--primary))' }}
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleRejectOnboarding(prof.Email)}
+                                    className="btn-secondary"
+                                    style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444' }}
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -5026,6 +5087,176 @@ export default function AdminDashboard({ currentUser }) {
                   style={{ flex: 1, padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: '800' }}
                 >
                   {isUpdatingTrust ? 'Saving Override...' : 'Save Override'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Issue License Modal */}
+      {showIssueModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.8)', backdropFilter: 'blur(10px)',
+          zIndex: 99999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
+        }}>
+          <div className="glass-card-premium" style={{
+            width: '100%', maxWidth: '480px', padding: '32px',
+            border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+            position: 'relative'
+          }}>
+            <button 
+              onClick={() => setShowIssueModal(false)} 
+              style={{ position: 'absolute', top: '20px', right: '20px', background: 'none', border: 'none', color: 'hsl(var(--text-muted))', cursor: 'pointer' }}
+            >
+              <X size={20} />
+            </button>
+
+            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#fff', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <KeyRound style={{ color: 'hsl(var(--primary))' }} size={22} />
+              Issue Supplier License
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: 'hsl(var(--text-muted))', marginBottom: '24px' }}>
+              Generate a unique license key to grant POS sale channel access to a supplier.
+            </p>
+
+            <form onSubmit={handleIssueLicense} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Supplier Email</label>
+                <input 
+                  type="email"
+                  required
+                  placeholder="e.g. supplier@example.com"
+                  value={newLicenseEmail}
+                  onChange={(e) => setNewLicenseEmail(e.target.value)}
+                  className="styled-input"
+                  style={{ width: '100%', background: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Monthly Fee (BDT)</label>
+                <input 
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 1500"
+                  value={newLicenseFee}
+                  onChange={(e) => setNewLicenseFee(e.target.value)}
+                  className="styled-input"
+                  style={{ width: '100%', background: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Expiry Date</label>
+                <input 
+                  type="date"
+                  value={newLicenseExpiry}
+                  onChange={(e) => setNewLicenseExpiry(e.target.value)}
+                  className="styled-input"
+                  style={{ width: '100%', background: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}
+                />
+                <span style={{ fontSize: '0.65rem', color: 'hsl(var(--text-muted))', marginTop: '4px', display: 'block' }}>
+                  Defaults to 30 days from now if left blank.
+                </span>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Notes / Internal Memo</label>
+                <textarea 
+                  placeholder="e.g. Promo license key for premium supplier shop"
+                  value={newLicenseNotes}
+                  onChange={(e) => setNewLicenseNotes(e.target.value)}
+                  className="styled-textarea"
+                  style={{ minHeight: '80px', width: '100%', background: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                <button 
+                  type="button" 
+                  onClick={() => setShowIssueModal(false)} 
+                  className="btn-secondary" 
+                  style={{ flex: 1, padding: '12px' }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn-primary" 
+                  style={{ flex: 1, padding: '12px', fontWeight: '800' }}
+                >
+                  Generate & Issue
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Renew License Modal */}
+      {showRenewModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(4, 6, 10, 0.8)', backdropFilter: 'blur(10px)',
+          zIndex: 99999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          animation: 'scaleIn 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
+        }}>
+          <div className="glass-card-premium" style={{
+            width: '100%', maxWidth: '400px', padding: '32px',
+            border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+            position: 'relative'
+          }}>
+            <button 
+              onClick={() => setShowRenewModal(false)} 
+              style={{ position: 'absolute', top: '20px', right: '20px', background: 'none', border: 'none', color: 'hsl(var(--text-muted))', cursor: 'pointer' }}
+            >
+              <X size={20} />
+            </button>
+
+            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#fff', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <RefreshCw style={{ color: 'hsl(var(--primary))' }} size={22} />
+              Renew License
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: 'hsl(var(--text-muted))', marginBottom: '24px' }}>
+              Extend the expiration date of this supplier license.
+            </p>
+
+            <form onSubmit={handleRenewLicense} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.72rem', color: 'hsl(var(--text-secondary))', fontWeight: '800', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Extension Duration (Days)</label>
+                <select 
+                  value={renewDays}
+                  onChange={(e) => setRenewDays(e.target.value)}
+                  className="styled-input"
+                  style={{ width: '100%', background: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}
+                >
+                  <option value={30}>30 Days (1 Month)</option>
+                  <option value={90}>90 Days (3 Months)</option>
+                  <option value={180}>180 Days (6 Months)</option>
+                  <option value={365}>365 Days (1 Year)</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                <button 
+                  type="button" 
+                  onClick={() => setShowRenewModal(false)} 
+                  className="btn-secondary" 
+                  style={{ flex: 1, padding: '12px' }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn-primary" 
+                  style={{ flex: 1, padding: '12px', fontWeight: '800' }}
+                >
+                  Renew License
                 </button>
               </div>
             </form>

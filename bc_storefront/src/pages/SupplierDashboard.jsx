@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { 
   Package, HardDrive, KeyRound, CheckCircle, 
   BarChart, PlusCircle, LogOut, RefreshCw, Send, Check, X, 
-  AlertCircle, History, Upload, Image as ImageIcon, ArrowLeft, ArrowRight, Star, Trash2
+  AlertCircle, History, Upload, Image as ImageIcon, ArrowLeft, ArrowRight, Star, Trash2,
+  Layers, AlertTriangle
 } from 'lucide-react';
 import { api } from '../services/api';
 import { commissionApi } from '../services/commissionApi';
@@ -19,6 +20,21 @@ export default function SupplierDashboard({ currentUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState('');
+
+  // POS (Physical Shop Sale) State
+  const [posCart, setPosCart] = useState([]);
+  const [posSelectedProductId, setPosSelectedProductId] = useState('');
+  const [posSelectedQty, setPosSelectedQty] = useState(1);
+  const [posSelectedPrice, setPosSelectedPrice] = useState('');
+  const [posPhone, setPosPhone] = useState('');
+  const [posPaymentMethod, setPosPaymentMethod] = useState('CASH');
+  const [posCheckingOut, setPosCheckingOut] = useState(false);
+  const [posError, setPosError] = useState(null);
+  const [posSuccess, setPosSuccess] = useState('');
+
+  // Supplier License Status State
+  const [licenseInfo, setLicenseInfo] = useState(null);
+  const [licenseLoading, setLicenseLoading] = useState(false);
 
   // Phase 2: Supplier Commission States
   const [commissionSummary, setCommissionSummary] = useState(null);
@@ -77,13 +93,26 @@ export default function SupplierDashboard({ currentUser }) {
   const [historyJobs, setHistoryJobs] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  const fetchLicenseInfo = async () => {
+    setLicenseLoading(true);
+    try {
+      const res = await api.get('/api/supplier/license/status');
+      setLicenseInfo(res || null);
+    } catch (err) {
+      console.error('Failed to fetch supplier license info:', err);
+    } finally {
+      setLicenseLoading(false);
+    }
+  };
+
   const fetchSupplierData = async () => {
     setLoading(true);
     setError(null);
     try {
       const [prodRes, transRes] = await Promise.all([
         api.get('/api/products').catch(() => ({ items: [] })),
-        api.get('/api/inventory/transfers').catch(() => ({ items: [] }))
+        api.get('/api/inventory/transfers').catch(() => ({ items: [] })),
+        fetchLicenseInfo().catch(() => null)
       ]);
       setProducts(prodRes.items || []);
       setTransfers(transRes.items || []);
@@ -120,6 +149,98 @@ export default function SupplierDashboard({ currentUser }) {
       fetchCommissionData();
     }
   }, [activeTab]);
+
+  // POS Checkout Helpers
+  const handleAddToPosCart = () => {
+    if (!posSelectedProductId) {
+      setPosError('Please select a product first.');
+      return;
+    }
+    const product = products.find(p => p.productId === parseInt(posSelectedProductId, 10));
+    if (!product) {
+      setPosError('Selected product not found.');
+      return;
+    }
+    const qty = parseInt(posSelectedQty, 10);
+    if (isNaN(qty) || qty <= 0) {
+      setPosError('Quantity must be greater than zero.');
+      return;
+    }
+    const price = parseFloat(posSelectedPrice || product.suggestedRetailPrice || product.rpuMrp || 0);
+    if (isNaN(price) || price < 0) {
+      setPosError('Price must be a valid non-negative number.');
+      return;
+    }
+    const available = product.masterOnHand - (product.masterReserved || 0);
+    const existing = posCart.find(item => item.productId === product.productId);
+    const needed = (existing ? existing.qty : 0) + qty;
+    if (needed > available) {
+      setPosError(`Cannot add. Total requested qty (${needed}) exceeds available MASTER stock (${available}).`);
+      return;
+    }
+    setPosError(null);
+    setPosSuccess('');
+    if (existing) {
+      setPosCart(posCart.map(item => 
+        item.productId === product.productId 
+          ? { ...item, qty: needed, price } 
+          : item
+      ));
+    } else {
+      setPosCart([...posCart, {
+        productId: product.productId,
+        productName: product.productName,
+        sku: product.sku,
+        qty,
+        price
+      }]);
+    }
+    setPosSelectedProductId('');
+    setPosSelectedQty(1);
+    setPosSelectedPrice('');
+  };
+
+  const handleRemoveFromPosCart = (productId) => {
+    setPosCart(posCart.filter(item => item.productId !== productId));
+    setPosError(null);
+    setPosSuccess('');
+  };
+
+  const handlePosCheckout = async (e) => {
+    if (e) e.preventDefault();
+    if (posCart.length === 0) {
+      setPosError('Cart is empty. Please add items to checkout.');
+      return;
+    }
+    setPosCheckingOut(true);
+    setPosError(null);
+    setPosSuccess('');
+    try {
+      const orderRef = 'POS-ORD-' + Math.floor(100000 + Math.random() * 900000);
+      const itemsPayload = posCart.map(item => ({
+        productId: item.productId,
+        qty: item.qty,
+        unitPrice: item.price
+      }));
+      await api.post('/api/orders', {
+        orderRef,
+        items: itemsPayload,
+        currency: 'BDT',
+        customerPhone: posPhone.trim() || null,
+        saleChannel: 'PHYSICAL_SHOP',
+        paymentMethod: posPaymentMethod
+      });
+      setPosSuccess(`Physical sale recorded successfully! Order Ref: ${orderRef}`);
+      setPosCart([]);
+      setPosPhone('');
+      setPosPaymentMethod('CASH');
+      fetchSupplierData();
+    } catch (err) {
+      setPosError(err.message || 'Checkout failed. Please inspect quantities and try again.');
+    } finally {
+      setPosCheckingOut(false);
+    }
+  };
 
   const handleLogout = () => {
     window.location.href = `${backendUrl}/auth/logout`;
@@ -675,6 +796,44 @@ export default function SupplierDashboard({ currentUser }) {
             </div>
           )}
 
+          {licenseInfo && (
+            <div 
+              title={
+                licenseInfo.isValid 
+                  ? `License key is active! Expires at: ${licenseInfo.expiresAt ? new Date(licenseInfo.expiresAt).toLocaleDateString() : 'Never'} (${licenseInfo.daysRemaining} days remaining)`
+                  : licenseInfo.hasLicense 
+                  ? 'Your license key is expired or inactive. Renew your license with administration.'
+                  : 'You have no physical shop POS license. Contact administration to purchase.'
+              }
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '20px',
+                fontSize: '0.72rem',
+                fontWeight: '800',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                background: licenseInfo.isValid 
+                  ? 'rgba(52,168,83,0.12)' 
+                  : 'rgba(234,67,53,0.12)',
+                color: licenseInfo.isValid 
+                  ? '#34a853' 
+                  : '#ea4335',
+                border: `1px solid ${
+                  licenseInfo.isValid 
+                    ? 'rgba(52,168,83,0.25)' 
+                    : 'rgba(234,67,53,0.25)'
+                }`,
+                cursor: 'help'
+              }}
+            >
+              <KeyRound size={12} fill="none" />
+              <span>POS License: {licenseInfo.isValid ? 'Active' : 'Inactive'}</span>
+            </div>
+          )}
+
           <div className="user-badge" style={{ background: 'rgba(255,255,255,0.03)', padding: '4px 12px 4px 6px', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '30px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <img src={currentUser?.avatar} alt="Avatar" className="user-avatar" style={{ border: '2px solid hsl(var(--primary))', width: '28px', height: '28px' }} />
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
@@ -735,6 +894,16 @@ export default function SupplierDashboard({ currentUser }) {
               >
                 <KeyRound size={18} />
                 BYOK Gemini Key
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => setActiveTab('physicalSale')} 
+                className={`sidebar-link w-full text-left ${activeTab === 'physicalSale' ? 'active' : ''}`}
+                style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              >
+                <Layers size={18} style={{ color: 'hsl(var(--primary))' }} />
+                POS / Physical Sale
               </button>
             </li>
           </ul>
@@ -1892,6 +2061,289 @@ export default function SupplierDashboard({ currentUser }) {
                   </div>
                 </div>
               }
+
+              {/* TAB: POS / PHYSICAL SALE */}
+              {activeTab === 'physicalSale' && (
+                <div className="tab-animation">
+                  <div style={{ marginBottom: '28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h2 style={{ fontSize: '1.75rem', marginBottom: '6px', fontWeight: '800', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Layers style={{ color: 'hsl(var(--primary))' }} size={28} />
+                        POS / Physical Shop Sale
+                      </h2>
+                      <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.925rem' }}>
+                        Record instant walk-in physical sales directly reducing MASTER stock pool.
+                      </p>
+                    </div>
+                    {licenseInfo?.isValid && (
+                      <span style={{
+                        fontSize: '0.78rem',
+                        fontWeight: '800',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        background: 'rgba(52, 168, 83, 0.12)',
+                        color: '#34a853',
+                        padding: '6px 14px',
+                        borderRadius: '20px',
+                        border: '1px solid rgba(52, 168, 83, 0.25)'
+                      }}>
+                        License Key: {licenseInfo.licenseKey}
+                      </span>
+                    )}
+                  </div>
+
+                  {!licenseInfo?.isValid ? (
+                    /* LICENSE GATE SCREEN */
+                    <div className="glass-card-premium" style={{
+                      padding: '80px 40px',
+                      textAlign: 'center',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '24px',
+                      background: 'rgba(13, 17, 24, 0.6)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: '20px',
+                      boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+                      maxWidth: '680px',
+                      margin: '40px auto',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}>
+                      {/* Background blur decorative element */}
+                      <div style={{
+                        position: 'absolute', top: '-50px', left: '-50px', width: '200px', height: '200px',
+                        background: 'hsl(var(--primary) / 0.15)', borderRadius: '50%', filter: 'blur(60px)', zIndex: 0
+                      }} />
+                      <div style={{
+                        position: 'absolute', bottom: '-50px', right: '-50px', width: '200px', height: '200px',
+                        background: 'hsl(var(--primary) / 0.1)', borderRadius: '50%', filter: 'blur(60px)', zIndex: 0
+                      }} />
+
+                      <div style={{
+                        position: 'relative',
+                        width: '90px',
+                        height: '90px',
+                        borderRadius: '50%',
+                        background: 'rgba(234, 67, 53, 0.1)',
+                        border: '2px solid rgba(234, 67, 53, 0.25)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#ea4335',
+                        marginBottom: '8px',
+                        zIndex: 1
+                      }}>
+                        <KeyRound size={42} style={{ filter: 'drop-shadow(0 0 10px rgba(234,67,53,0.3))' }} />
+                      </div>
+
+                      <div style={{ zIndex: 1 }}>
+                        <h3 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#fff', marginBottom: '12px' }}>
+                          POS Access Restricted
+                        </h3>
+                        <p style={{ color: 'hsl(var(--text-secondary))', fontSize: '0.95rem', lineHeight: '1.6', maxWidth: '500px', margin: '0 auto' }}>
+                          To activate the physical POS / Point of Sale panel and sync your walk-in shop orders directly with the shared stock ledger, you must have an active monthly license key.
+                        </p>
+                      </div>
+
+                      <div className="glass-card" style={{
+                        padding: '16px 24px',
+                        background: 'rgba(255,255,255,0.02)',
+                        border: '1px solid rgba(255,255,255,0.05)',
+                        borderRadius: '12px',
+                        fontSize: '0.85rem',
+                        color: 'hsl(var(--text-muted))',
+                        zIndex: 1,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        width: '100%',
+                        maxWidth: '440px',
+                        textAlign: 'left'
+                      }}>
+                        <div><strong>Current Status:</strong> <span style={{ color: '#ea4335', fontWeight: '700' }}>Inactive</span></div>
+                        {licenseInfo?.licenseKey ? (
+                          <>
+                            <div><strong>License Key:</strong> <span style={{ fontFamily: 'monospace' }}>{licenseInfo.licenseKey}</span></div>
+                            {licenseInfo.expiresAt && (
+                              <div><strong>Expired On:</strong> {new Date(licenseInfo.expiresAt).toLocaleString()}</div>
+                            )}
+                          </>
+                        ) : (
+                          <div><strong>License Key:</strong> None Issued</div>
+                        )}
+                        <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px', fontSize: '0.78rem', color: '#ffb300' }}>
+                          💡 Please contact the BrandCreator admin team at <strong>admin@brandcreator.com</strong> to get a new license key or renew your subscription.
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* FULL POS SCREEN */
+                    <>
+                      {posError && (
+                        <div className="glass-card" style={{ padding: '16px', background: 'rgba(234, 67, 53, 0.1)', borderColor: 'rgba(234, 67, 53, 0.25)', color: '#ea4335', marginBottom: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <AlertTriangle size={18} />
+                          <span style={{ fontSize: '0.9rem', fontWeight: '600' }}>{posError}</span>
+                        </div>
+                      )}
+                      {posSuccess && (
+                        <div className="glass-card" style={{ padding: '16px', background: 'rgba(52, 168, 83, 0.1)', borderColor: 'rgba(52, 168, 83, 0.25)', color: '#34a853', marginBottom: '24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <Check size={18} />
+                          <span style={{ fontSize: '0.9rem', fontWeight: '600' }}>{posSuccess}</span>
+                        </div>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 450px', gap: '30px', alignItems: 'start' }}>
+                        {/* Left Column: Product Selector & Add Form */}
+                        <div className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                          <h3 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px' }}>
+                            Add Product to Cart
+                          </h3>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <label style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>SELECT PRODUCT</label>
+                            <select 
+                              value={posSelectedProductId} 
+                              onChange={(e) => {
+                                setPosSelectedProductId(e.target.value);
+                                const prod = products.find(p => p.productId === parseInt(e.target.value, 10));
+                                if (prod) {
+                                  setPosSelectedPrice(prod.suggestedRetailPrice || prod.rpuMrp || '');
+                                } else {
+                                  setPosSelectedPrice('');
+                                }
+                              }}
+                              className="styled-input"
+                              style={{ textTransform: 'none', width: '100%', background: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}
+                            >
+                              <option value="">-- Choose Product --</option>
+                              {products.filter(p => p.qcStatus === 'APPROVED').map(p => {
+                                const avail = p.masterOnHand - (p.masterReserved || 0);
+                                return (
+                                  <option key={p.productId} value={p.productId} disabled={avail <= 0}>
+                                    {p.productName} (SKU: {p.sku}) | Stock: {avail} units | SRP: ৳{p.suggestedRetailPrice || '0.00'}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <label style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>QUANTITY</label>
+                              <input 
+                                type="number" 
+                                min="1"
+                                value={posSelectedQty} 
+                                onChange={(e) => setPosSelectedQty(parseInt(e.target.value, 10) || 1)}
+                                className="styled-input" 
+                              />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <label style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>UNIT PRICE (৳)</label>
+                              <input 
+                                type="number" 
+                                step="0.01"
+                                placeholder="Default to Retail"
+                                value={posSelectedPrice} 
+                                onChange={(e) => setPosSelectedPrice(e.target.value)}
+                                className="styled-input" 
+                              />
+                            </div>
+                          </div>
+                          <button 
+                            onClick={handleAddToPosCart}
+                            className="btn-primary"
+                            style={{ marginTop: '10px', padding: '12px' }}
+                          >
+                            Add to Cart
+                          </button>
+                        </div>
+                        {/* Right Column: POS Cart & Checkout */}
+                        <div className="glass-card-premium" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                          <h3 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>POS Cart</span>
+                            <span style={{ fontSize: '0.9rem', background: 'rgba(255,255,255,0.06)', padding: '2px 8px', borderRadius: '6px', color: 'hsl(var(--primary))' }}>
+                              {posCart.reduce((sum, item) => sum + item.qty, 0)} items
+                            </span>
+                          </h3>
+                          {posCart.length === 0 ? (
+                            <div style={{ padding: '40px 0', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
+                              POS Cart is empty. Select products on the left.
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                              <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }} className="custom-scrollbar">
+                                {posCart.map(item => (
+                                  <div key={item.productId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.04)' }}>
+                                    <div>
+                                      <div style={{ fontWeight: '700', fontSize: '0.875rem', color: '#fff' }}>{item.productName}</div>
+                                      <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', marginTop: '3px' }}>
+                                        {item.qty} units × ৳{item.price}
+                                      </div>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                      <span style={{ fontWeight: '700', color: '#fff' }}>৳{item.qty * item.price}</span>
+                                      <button 
+                                        onClick={() => handleRemoveFromPosCart(item.productId)}
+                                        style={{ background: 'rgba(234, 67, 53, 0.1)', border: 'none', color: '#ea4335', padding: '6px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                      >
+                                        <X size={14} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                {/* Total Display */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontSize: '1rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>TOTAL AMOUNT</span>
+                                  <span style={{ fontSize: '1.5rem', fontWeight: '800', color: 'hsl(var(--primary))' }}>
+                                    ৳{posCart.reduce((sum, item) => sum + (item.price * item.qty), 0)}
+                                  </span>
+                                </div>
+                                {/* Customer Phone & Payment Method */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>CUSTOMER PHONE (OPTIONAL)</label>
+                                    <input 
+                                      type="text" 
+                                      placeholder="017xxxxxxxx"
+                                      value={posPhone} 
+                                      onChange={(e) => setPosPhone(e.target.value)}
+                                      className="styled-input" 
+                                    />
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <label style={{ fontSize: '0.75rem', color: 'hsl(var(--text-secondary))', fontWeight: '700' }}>PAYMENT METHOD</label>
+                                    <select 
+                                      value={posPaymentMethod} 
+                                      onChange={(e) => setPosPaymentMethod(e.target.value)}
+                                      className="styled-input"
+                                      style={{ width: '100%', background: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}
+                                    >
+                                      <option value="CASH">CASH</option>
+                                      <option value="CARD">CARD</option>
+                                      <option value="BKASH">BKASH</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={handlePosCheckout}
+                                  disabled={posCheckingOut}
+                                  className="btn-primary"
+                                  style={{ padding: '14px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                                >
+                                  <Check size={18} />
+                                  {posCheckingOut ? 'Recording...' : 'Confirm Physical Sale'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* TAB: MY COMMISSIONS */}
               {activeTab === 'commissions' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }} className="tab-animation">

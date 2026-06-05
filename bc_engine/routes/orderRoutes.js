@@ -3,9 +3,10 @@ const router = express.Router();
 const orderController = require('../controllers/orderController');
 const secretAdminController = require('../controllers/secretAdminController');
 const { requireRole } = require('../src/middleware/auth');
+const { requireLicense } = require('../src/middleware/license');
 
 // Route definitions
-router.post('/orders', requireRole(['Customer', 'Supplier', 'Admin', 'SuperAdmin']), orderController.createOrder);
+router.post('/orders', requireRole(['Customer', 'Supplier', 'Admin', 'SuperAdmin']), requireLicense, orderController.createOrder);
 router.post('/orders/:orderRef/confirm', requireRole(['Admin', 'SuperAdmin', 'PaymentWebhook']), orderController.confirmOrder);
 router.post('/orders/:orderRef/cancel', requireRole(['Customer', 'Supplier', 'Admin', 'SuperAdmin', 'PaymentWebhook']), orderController.cancelOrder);
 router.get('/orders', requireRole(['Admin', 'SuperAdmin', 'Supplier', 'Customer']), orderController.getOrders);

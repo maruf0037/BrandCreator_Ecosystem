@@ -10,11 +10,23 @@ export default function ProtectedRoute({ children, allowedRoles }) {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
+    // Build x-user-* headers from sessionStorage for devAuthSimulator fallback
+    const extraHeaders = {};
+    try {
+      const cached = sessionStorage.getItem('bc_user');
+      if (cached) {
+        const u = JSON.parse(cached);
+        if (u.email) extraHeaders['x-user-email'] = u.email;
+        if (u.role)  extraHeaders['x-user-role']  = u.role;
+      }
+    } catch (_) {}
+
     // Audit active session on the Express API server
     fetch(`${backendUrl}/auth/current-user`, {
       method: 'GET',
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        ...extraHeaders
       },
       // Essential to allow express-session cookies to be shared
       credentials: 'include'
@@ -29,8 +41,11 @@ export default function ProtectedRoute({ children, allowedRoles }) {
         if (data.authenticated) {
           setAuthenticated(true);
           setUser(data.user);
+          // Cache user info so api.js can send x-user-* headers as fallback
+          try { sessionStorage.setItem('bc_user', JSON.stringify(data.user)); } catch (_) {}
         } else {
           setAuthenticated(false);
+          try { sessionStorage.removeItem('bc_user'); } catch (_) {}
         }
         setLoading(false);
       })
@@ -63,9 +78,23 @@ export default function ProtectedRoute({ children, allowedRoles }) {
     return <Navigate to="/login" replace />;
   }
 
-  // Auditing allowed role clearance
   const role = user?.role || 'Customer';
-  
+  const currentPath = window.location.pathname;
+
+  // 1. Supplier onboarding gate
+  if (role === 'Supplier' && user?.supplierStatus !== 'APPROVED') {
+    if (currentPath !== '/supplier-onboarding') {
+      return <Navigate to="/supplier-onboarding" replace />;
+    }
+  }
+
+  // 2. Customer profile completion gate
+  if (role === 'Customer' && !user?.customerProfileComplete) {
+    if (currentPath !== '/profile-completion' && currentPath !== '/supplier-onboarding') {
+      return <Navigate to="/profile-completion" replace />;
+    }
+  }
+
   if (allowedRoles && !allowedRoles.includes(role)) {
     // If the user's role is not cleared, redirect to their default home
     if (role === 'SuperAdmin' || role === 'Admin') {

@@ -18,6 +18,7 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const commissionRoutes = require('./routes/commissionRoutes');
 const revenueRoutes = require('./routes/revenueRoutes');
 const healthRoutes = require('./src/routes/healthRoutes');
+const licenseRoutes = require('./routes/licenseRoutes');
 
 // Observability Additions
 const reqId = require("./src/middleware/reqId");
@@ -35,7 +36,8 @@ const allowedOrigins = [
   'http://localhost:8080',
   'http://localhost:5173',
   'http://100.110.252.19:5173',
-  'http://100.110.252.19:8080'
+  'http://100.110.252.19:8080',
+  'http://desktop-pcp6mnk.tail929089.ts.net:8080'
 ];
 
 app.use(cors({
@@ -63,7 +65,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     secure: false,
-    sameSite: 'lax'
+    sameSite: 'none'  // Allow cross-port requests (8080 → 5000) on same host
   }
 }));
 
@@ -117,6 +119,8 @@ app.use('/api', uploadRoutes);
 app.use('/api', commissionRoutes);
 app.use('/api', revenueRoutes);
 app.use('/', healthRoutes); // GET /health/deep
+app.use('/api', licenseRoutes);
+app.use('/api', require('./routes/onboardingRoutes'));
 
 // Global http error tracking middleware
 app.use((err, req, res, _next) => {

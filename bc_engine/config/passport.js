@@ -8,8 +8,9 @@ passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID || 'dummy_client_id',
   clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'dummy_client_secret',
   callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/auth/google/callback',
-  proxy: true
-}, async (_accessToken, _refreshToken, profile, done) => {
+  proxy: true,
+  passReqToCallback: true
+}, async (req, _accessToken, _refreshToken, profile, done) => {
   try {
     const pool = await poolPromise;
     const email = profile.emails && profile.emails[0] ? profile.emails[0].value.toLowerCase().trim() : '';
@@ -22,8 +23,11 @@ passport.use(new GoogleStrategy({
       .query('SELECT TOP 1 * FROM Users WHERE Email = @email');
     let user = result.recordset[0];
 
+    const requestedRole = req.session && req.session.oauthRole;
+
     if (!user) {
-      const role = email === SUPER_ADMIN_EMAIL ? 'SuperAdmin' : 'Customer';
+      const defaultRole = email === SUPER_ADMIN_EMAIL ? 'SuperAdmin' : (requestedRole || 'Customer');
+      const role = (defaultRole === 'Supplier' || defaultRole === 'Customer') ? defaultRole : 'Customer';
       await pool.request()
         .input('email', sql.NVarChar(255), email)
         .input('googleId', sql.NVarChar(255), googleId)

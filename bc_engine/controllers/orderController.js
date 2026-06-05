@@ -323,15 +323,29 @@ exports.createOrder = async (req, res) => {
 exports.confirmOrder = async (req, res) => {
   const { orderRef } = req.params;
   const { provider, eventType, eventRef, payload } = req.body;
-  const idempotencyKey = req.headers['idempotency-key'];
   const email = req.user?.email || 'webhook@payment.com';
+  const userRole = req.user?.role || 'anonymous';
+  const isAdmin = (userRole === 'Admin' || userRole === 'SuperAdmin');
 
-  if (!idempotencyKey) {
-    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Idempotency-Key header is required' });
-  }
+  // For Admin manual confirms, auto-generate required fields
+  let idempotencyKey = req.headers['idempotency-key'];
+  let effectiveProvider  = provider;
+  let effectiveEventType = eventType;
+  let effectiveEventRef  = eventRef;
 
-  if (!provider || !eventType || !eventRef) {
-    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'provider, eventType, and eventRef are required' });
+  if (isAdmin) {
+    // Admin manual override: generate idempotency key and default payment fields
+    idempotencyKey    = idempotencyKey    || `ADMIN-${orderRef}-${Date.now()}`;
+    effectiveProvider  = effectiveProvider  || 'ADMIN_MANUAL';
+    effectiveEventType = effectiveEventType || 'MANUAL_CONFIRM';
+    effectiveEventRef  = effectiveEventRef  || `ADMIN-${email}-${Date.now()}`;
+  } else {
+    if (!idempotencyKey) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Idempotency-Key header is required' });
+    }
+    if (!effectiveProvider || !effectiveEventType || !effectiveEventRef) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'provider, eventType, and eventRef are required' });
+    }
   }
 
   try {
@@ -361,9 +375,9 @@ exports.confirmOrder = async (req, res) => {
       // Reserve the idempotency key in a quick insert
       try {
         await pool.request()
-          .input('provider', sql.NVarChar(50), provider)
-          .input('eventType', sql.NVarChar(50), eventType)
-          .input('eventRef', sql.NVarChar(150), eventRef)
+          .input('provider', sql.NVarChar(50), effectiveProvider)
+          .input('eventType', sql.NVarChar(50), effectiveEventType)
+          .input('eventRef', sql.NVarChar(150), effectiveEventRef)
           .input('orderRef', sql.NVarChar(100), orderRef)
           .input('key', sql.NVarChar(150), idempotencyKey)
           .input('payload', sql.NVarChar(sql.MAX), JSON.stringify(payload || {}))
@@ -413,7 +427,8 @@ exports.confirmOrder = async (req, res) => {
 
       // Check payment status or manual admin override with review note
       const isVerified = order.PaymentStatus === 'PAYMENT_VERIFIED';
-      const manualReviewNote = req.body.manualReviewNote || req.body.overrideNote || payload?.manualReviewNote;
+      const manualReviewNote = req.body.manualReviewNote || req.body.overrideNote || payload?.manualReviewNote
+        || (isAdmin ? `Admin manual confirm by ${email}` : null);
       const isManualOverride = Boolean(manualReviewNote && (req.user?.role === 'Admin' || req.user?.role === 'SuperAdmin'));
 
       if (!isVerified && !isManualOverride) {

@@ -11,11 +11,19 @@ exports.googleCallback = (req, res) => {
   if (emailVal === "md.marufalrashid@gmail.com") {
     role = "SuperAdmin";
   }
-  const frontend = resolveFrontendUrl();
+  
+  const requestedRole = req.session && req.session.oauthRole;
+  if (req.session) {
+    delete req.session.oauthRole;
+  }
 
-  if (role === "SuperAdmin" || role === "Admin") return res.redirect(`${frontend}/admin`);
-  if (role === "Supplier") return res.redirect(`${frontend}/supplier`);
-  return res.redirect(`${frontend}/shop`);
+  const frontend = resolveFrontendUrl();
+  const params = `?auth_email=${encodeURIComponent(emailVal)}&auth_role=${encodeURIComponent(role)}`;
+
+  if (role === "SuperAdmin" || role === "Admin") return res.redirect(`${frontend}/admin${params}`);
+  if (role === "Supplier") return res.redirect(`${frontend}/supplier${params}`);
+  if (requestedRole === "Supplier") return res.redirect(`${frontend}/supplier-onboarding${params}`);
+  return res.redirect(`${frontend}/shop${params}`);
 };
 
 exports.authFailure = (_req, res) => {
@@ -29,7 +37,7 @@ exports.logout = (req, res, next) => {
   });
 };
 
-exports.getCurrentUser = (req, res) => {
+exports.getCurrentUser = async (req, res) => {
   if (!req.user) {
     return res.status(401).json({ authenticated: false, message: "Not logged in" });
   }
@@ -39,18 +47,50 @@ exports.getCurrentUser = (req, res) => {
     roleVal = "SuperAdmin";
   }
 
-  const user = {
-    id: req.user.id || req.user.Id || req.user.UserID || null,
-    email: emailVal,
-    role: roleVal,
-    displayName: req.user.displayName || req.user.DisplayName || "",
-    avatar: req.user.avatar || req.user.Avatar || ""
-  };
+  try {
+    const pool = await poolPromise;
+    
+    // Check Supplier onboarding status
+    let supplierStatus = 'NOT_SUBMITTED';
+    let rejectReason = null;
+    const supplierRes = await pool.request()
+      .input('email', sql.NVarChar(255), emailVal)
+      .query('SELECT TOP 1 Status, RejectReason FROM dbo.SupplierProfiles WHERE Email = @email');
+    if (supplierRes.recordset.length > 0) {
+      supplierStatus = supplierRes.recordset[0].Status;
+      rejectReason = supplierRes.recordset[0].RejectReason;
+    }
 
-  return res.json({
-    authenticated: true,
-    user
-  });
+    // Check Customer profile completion status
+    let customerProfileComplete = false;
+    const customerRes = await pool.request()
+      .input('email', sql.NVarChar(255), emailVal)
+      .query('SELECT TOP 1 PhoneNumber, DeliveryAddress FROM dbo.CustomerProfiles WHERE Email = @email');
+    if (customerRes.recordset.length > 0) {
+      const cp = customerRes.recordset[0];
+      if (cp.PhoneNumber && cp.DeliveryAddress) {
+        customerProfileComplete = true;
+      }
+    }
+
+    const user = {
+      id: req.user.id || req.user.Id || req.user.UserID || null,
+      email: emailVal,
+      role: roleVal,
+      displayName: req.user.displayName || req.user.DisplayName || "",
+      avatar: req.user.avatar || req.user.Avatar || "",
+      supplierStatus,
+      rejectReason,
+      customerProfileComplete
+    };
+
+    return res.json({
+      authenticated: true,
+      user
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'INTERNAL_ERROR', message: err.message });
+  }
 };
 
 exports.simulateLogin = async (req, res) => {
@@ -65,13 +105,70 @@ exports.simulateLogin = async (req, res) => {
 
   try {
     const pool = await poolPromise;
+    const trimmedEmail = email.toLowerCase().trim();
+
+    // Seed onboarding simulation profiles
+    if (trimmedEmail === 'pending@example.com') {
+      await pool.request()
+        .input('email', sql.NVarChar(255), trimmedEmail)
+        .query(`
+          MERGE INTO dbo.SupplierProfiles AS target
+          USING (SELECT @email AS Email) AS source
+          ON (target.Email = source.Email)
+          WHEN MATCHED THEN
+            UPDATE SET Status = 'PENDING_APPROVAL', RejectReason = NULL
+          WHEN NOT MATCHED THEN
+            INSERT (Email, ShopName, ShopLocation, PhoneNumber, NID, TradeLicense, Status)
+            VALUES (source.Email, 'Simulated Pending Shop', 'Dhaka', '01700000000', '1234567890', 'TL-12345', 'PENDING_APPROVAL');
+        `);
+    } else if (trimmedEmail === 'rejected@example.com') {
+      await pool.request()
+        .input('email', sql.NVarChar(255), trimmedEmail)
+        .query(`
+          MERGE INTO dbo.SupplierProfiles AS target
+          USING (SELECT @email AS Email) AS source
+          ON (target.Email = source.Email)
+          WHEN MATCHED THEN
+            UPDATE SET Status = 'REJECTED', RejectReason = 'Invalid NID number provided.'
+          WHEN NOT MATCHED THEN
+            INSERT (Email, ShopName, ShopLocation, PhoneNumber, NID, TradeLicense, Status, RejectReason)
+            VALUES (source.Email, 'Simulated Rejected Shop', 'Dhaka', '01700000000', '0000000000', 'TL-12345', 'REJECTED', 'Invalid NID number provided.');
+        `);
+    } else if (trimmedEmail === 'approved@example.com') {
+      await pool.request()
+        .input('email', sql.NVarChar(255), trimmedEmail)
+        .query(`
+          MERGE INTO dbo.SupplierProfiles AS target
+          USING (SELECT @email AS Email) AS source
+          ON (target.Email = source.Email)
+          WHEN MATCHED THEN
+            UPDATE SET Status = 'APPROVED'
+          WHEN NOT MATCHED THEN
+            INSERT (Email, ShopName, ShopLocation, PhoneNumber, NID, TradeLicense, Status)
+            VALUES (source.Email, 'Simulated Approved Shop', 'Dhaka', '01700000000', '1234567890', 'TL-12345', 'APPROVED');
+        `);
+    } else if (trimmedEmail === 'customer_complete@example.com') {
+      await pool.request()
+        .input('email', sql.NVarChar(255), trimmedEmail)
+        .query(`
+          MERGE INTO dbo.CustomerProfiles AS target
+          USING (SELECT @email AS Email) AS source
+          ON (target.Email = source.Email)
+          WHEN MATCHED THEN
+            UPDATE SET PhoneNumber = '01800000000', DeliveryAddress = '123 Main Street, Dhaka'
+          WHEN NOT MATCHED THEN
+            INSERT (Email, PhoneNumber, DeliveryAddress)
+            VALUES (source.Email, '01800000000', '123 Main Street, Dhaka');
+        `);
+    }
+
     const result = await pool.request()
-      .input('email', sql.NVarChar(255), email.toLowerCase().trim())
+      .input('email', sql.NVarChar(255), trimmedEmail)
       .query('SELECT TOP 1 * FROM Users WHERE Email = @email');
     
     let user = result.recordset[0];
     let userRole = role || 'Customer';
-    if (email.toLowerCase().trim() === 'md.marufalrashid@gmail.com') {
+    if (trimmedEmail === 'md.marufalrashid@gmail.com') {
       userRole = 'SuperAdmin';
     }
 
