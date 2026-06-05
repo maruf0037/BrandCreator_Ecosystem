@@ -15,10 +15,12 @@ router.get(
       req.session.oauthRole = req.query.role;
     }
     
-    // Resolve callback URL dynamically based on current host header (localhost, tailscale, etc.)
+    // Resolve callback URL dynamically; fall back to .env configured URL if host is an IP address (since Google blocks HTTP IP redirects)
     const host = req.get('host');
-    const protocol = req.protocol;
-    const callbackURL = `${protocol}://${host}/auth/google/callback`;
+    const isIP = /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.test(host);
+    const callbackURL = (isIP && process.env.GOOGLE_CALLBACK_URL)
+      ? process.env.GOOGLE_CALLBACK_URL
+      : `${req.protocol}://${host}/auth/google/callback`;
 
     passport.authenticate('google', {
       scope: ['profile', 'email'],
@@ -33,8 +35,10 @@ router.get(
   '/google/callback',
   (req, res, next) => {
     const host = req.get('host');
-    const protocol = req.protocol;
-    const callbackURL = `${protocol}://${host}/auth/google/callback`;
+    const isIP = /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.test(host);
+    const callbackURL = (isIP && process.env.GOOGLE_CALLBACK_URL)
+      ? process.env.GOOGLE_CALLBACK_URL
+      : `${req.protocol}://${host}/auth/google/callback`;
 
     passport.authenticate('google', { 
       failureRedirect: '/login',
