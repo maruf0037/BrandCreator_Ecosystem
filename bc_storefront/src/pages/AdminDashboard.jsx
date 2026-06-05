@@ -718,6 +718,26 @@ export default function AdminDashboard({ currentUser }) {
     }
   };
 
+  const handleConfirmOrder = async (orderRef) => {
+    try {
+      await api.post(`/api/orders/${orderRef}/confirm`);
+      showToast(`Order ${orderRef} confirmed successfully!`);
+      fetchAllData();
+    } catch (err) {
+      setError(err.message || 'Failed to confirm order');
+    }
+  };
+
+  const handleCancelOrder = async (orderRef) => {
+    try {
+      await api.post(`/api/orders/${orderRef}/cancel`);
+      showToast(`Order ${orderRef} cancelled successfully!`);
+      fetchAllData();
+    } catch (err) {
+      setError(err.message || 'Failed to cancel order');
+    }
+  };
+
   const handleRetryOutboxEvent = async (outboxId) => {
     try {
       await api.post(`/api/outbox/${outboxId}/mark-sent`);
@@ -3581,19 +3601,20 @@ export default function AdminDashboard({ currentUser }) {
                           <th>Total Amount</th>
                           <th>Order Status</th>
                           <th>Placement Date</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {panelErrors.orders ? (
                           <tr>
-                            <td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#ea4335' }}>
+                            <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#ea4335' }}>
                               <AlertCircle style={{ display: 'inline', verticalAlign: 'middle', marginRight: '8px' }} size={16} />
                               {panelErrors.orders}
                             </td>
                           </tr>
                         ) : orders.length === 0 ? (
                           <tr>
-                            <td colSpan="5" style={{ padding: '48px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
+                            <td colSpan="6" style={{ padding: '48px', textAlign: 'center', color: 'hsl(var(--text-muted))', fontStyle: 'italic' }}>
                               No orders found.
                             </td>
                           </tr>
@@ -3610,6 +3631,48 @@ export default function AdminDashboard({ currentUser }) {
                               </td>
                               <td style={{ fontSize: '0.8rem', color: 'hsl(var(--text-muted))' }}>
                                 {new Date(order.createdAt).toLocaleString()}
+                              </td>
+                              <td>
+                                {order.status === 'PENDING' && (
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                      onClick={() => handleConfirmOrder(order.orderRef)}
+                                      style={{
+                                        padding: '6px 12px',
+                                        fontSize: '0.75rem',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        background: 'rgba(52, 168, 83, 0.15)',
+                                        color: '#34a853',
+                                        border: '1px solid rgba(52, 168, 83, 0.3)',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontWeight: '700'
+                                      }}
+                                    >
+                                      <Check size={12} /> Confirm
+                                    </button>
+                                    <button
+                                      onClick={() => handleCancelOrder(order.orderRef)}
+                                      style={{
+                                        padding: '6px 12px',
+                                        fontSize: '0.75rem',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        background: 'rgba(234, 67, 53, 0.15)',
+                                        color: '#ea4335',
+                                        border: '1px solid rgba(234, 67, 53, 0.3)',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontWeight: '700'
+                                      }}
+                                    >
+                                      <X size={12} /> Cancel
+                                    </button>
+                                  </div>
+                                )}
                               </td>
                             </tr>
                           ))
